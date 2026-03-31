@@ -53,6 +53,11 @@ class BookshelfViewModel(
     private val dao: ComicDao
 ) : AndroidViewModel(application) {
     
+    init {
+        // 冷启动即刻自动排查全部记录与图鉴，实现绝对同步
+        scanAllFolders()
+    }
+    
     private val _sortOrder = MutableStateFlow(SortOrder.LAST_READ)
     val sortOrder = _sortOrder.asStateFlow()
 
@@ -174,12 +179,23 @@ class BookshelfViewModel(
             e.printStackTrace() // 部分设备可能不支持 write，寄失不报
         }
 
+        // 添加后仅扫该单个分支即可，速度比全盘排摸更快
         val workRequest = OneTimeWorkRequestBuilder<LibraryScanWorker>()
             .setInputData(workDataOf(LibraryScanWorker.KEY_URI to treeUri.toString()))
             .addTag("SCAN_LIBRARY_WORK")
             .build()
         WorkManager.getInstance(getApplication()).enqueueUniqueWork(
-            "LibraryScan", ExistingWorkPolicy.KEEP, workRequest
+            "LibraryScan_Single", ExistingWorkPolicy.KEEP, workRequest
+        )
+    }
+
+    // 全量刷新：核对已授权表与 DB 的镜像差异
+    fun scanAllFolders() {
+        val workRequest = OneTimeWorkRequestBuilder<LibraryScanWorker>()
+            .addTag("SCAN_LIBRARY_WORK")
+            .build()
+        WorkManager.getInstance(getApplication()).enqueueUniqueWork(
+            "LibraryScan_All", ExistingWorkPolicy.KEEP, workRequest
         )
     }
 
@@ -213,14 +229,28 @@ class BookshelfViewModel(
                 var finalCoverPath = comic.coverCachePath
                 best.coverUrl?.let { url ->
                     try {
+                        // [网络层防护] ComicVine / Bangumi 往往拦截默认空 User-Agent 的裸请求
                         val client = OkHttpClient()
-                        val response = client.newCall(Request.Builder().url(url).build()).execute()
+                        val request = Request.Builder()
+                            .url(url)
+                            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                            .build()
+                        val response = client.newCall(request).execute()
                         val bytes = response.body?.bytes()
+                        
                         if (bytes != null && response.isSuccessful) {
-                            val file = File(getApplication<Application>().cacheDir, "covers/${UUID.randomUUID()}.webp")
-                            file.parentFile?.mkdirs()
-                            file.writeBytes(bytes)
-                            finalCoverPath = file.absolutePath
+                            // [格式与毁损防护] 经过原生 BitmapFactory 解构压缩，彻底杜绝服务器传回 JPG 却被盲目盖上 .webp 后缀导致 Coil 框架解析雪崩的隐患。
+                            val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            if (bitmap != null) {
+                                val file = File(getApplication<Application>().filesDir, "covers/${UUID.randomUUID()}.webp")
+                                file.parentFile?.mkdirs()
+                                java.io.FileOutputStream(file).use { out ->
+                                    @Suppress("DEPRECATION")
+                                    bitmap.compress(android.graphics.Bitmap.CompressFormat.WEBP, 85, out)
+                                }
+                                bitmap.recycle()
+                                finalCoverPath = file.absolutePath
+                            }
                         }
                     } catch (e: Exception) { e.printStackTrace() }
                 }

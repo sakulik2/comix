@@ -59,10 +59,21 @@ object CoverExtractor {
         context.contentResolver.openInputStream(uri)?.use { input ->
             val zis = ZipInputStream(input)
             var entry = zis.nextEntry
-            // 记录字典树以便找到首字母最小的图片（但不现实，流式只能读当前，如果要找真正的第一页应该收集所有 entry 再做决断。为了极速扫描，我们直接提取流中出现的第一个合规图片）
             while (entry != null) {
                 if (!entry.isDirectory && isImage(entry.name)) {
-                    val bitmap = BitmapFactory.decodeStream(zis)
+                    // [防裂断机制] 将完整的字节暂存入内存，彻底杜绝 ZIP 流读取时被 BitmapFactory 中途抛弃的玄学 BUG
+                    val bytes = zis.readBytes()
+                    
+                    // [防 OOM 测绘] 预扫尺寸
+                    val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                    
+                    // [下采样] 封面无需原图，强制缩小以成倍节约内存
+                    options.inSampleSize = calculateInSampleSize(options, 400, 600)
+                    options.inJustDecodeBounds = false
+                    options.inPreferredConfig = Bitmap.Config.RGB_565 // 放弃透明通道，省一半显存
+                    
+                    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
                     if (bitmap != null) {
                         saveBitmapToWebp(bitmap, outPath)
                         bitmap.recycle()
@@ -93,11 +104,19 @@ object CoverExtractor {
                 .minByOrNull { it.fileName }
             
             if (firstImage != null) {
-                val tempImg = File(context.cacheDir, "scan_temp_img")
+                val tempImg = File(context.cacheDir, "scan_temp_img_${System.currentTimeMillis()}")
                 FileOutputStream(tempImg).use { out ->
                     archive.extractFile(firstImage, out)
                 }
-                val bitmap = BitmapFactory.decodeFile(tempImg.absolutePath)
+                
+                // [防 OOM 测绘]
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(tempImg.absolutePath, options)
+                options.inSampleSize = calculateInSampleSize(options, 400, 600)
+                options.inJustDecodeBounds = false
+                options.inPreferredConfig = Bitmap.Config.RGB_565
+                
+                val bitmap = BitmapFactory.decodeFile(tempImg.absolutePath, options)
                 if (bitmap != null) {
                     saveBitmapToWebp(bitmap, outPath)
                     bitmap.recycle()
@@ -123,5 +142,19 @@ object CoverExtractor {
         val lower = name.lowercase()
         return lower.endsWith(".jpg") || lower.endsWith(".jpeg") ||
                lower.endsWith(".png") || lower.endsWith(".webp")
+    }
+
+    private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+        val (height: Int, width: Int) = options.outHeight to options.outWidth
+        var inSampleSize = 1
+
+        if (height > reqHeight || width > reqWidth) {
+            val halfHeight: Int = height / 2
+            val halfWidth: Int = width / 2
+            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                inSampleSize *= 2
+            }
+        }
+        return inSampleSize
     }
 }

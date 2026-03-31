@@ -25,6 +25,9 @@ interface ComicDao {
     @Query("SELECT * FROM comic_books WHERE id = :id LIMIT 1")
     suspend fun getComicById(id: Long): ComicEntity?
 
+    @Query("SELECT * FROM comic_books")
+    suspend fun getAllComicsUnordered(): List<ComicEntity>
+
     @Query("SELECT * FROM comic_books ORDER BY addedTime DESC")
     fun getAllComicsByAddedTimeFlow(): Flow<List<ComicEntity>>
 

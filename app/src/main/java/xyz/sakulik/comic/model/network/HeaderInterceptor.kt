@@ -12,8 +12,8 @@ class HeaderInterceptor(private val apiKeyProvider: () -> String?) : Interceptor
         val originalRequest = chain.request()
         val builder = originalRequest.newBuilder()
 
-        // 核心！全局通用的 UA 伪装：Bangumi 对于非主流的或者缺省爬虫 UA 会直接触发 403 / 50X 拦截
-        builder.header("User-Agent", "xyz.sakulik.comic/1.0 (Android Comic Reader System)")
+        // 核心！全局通用的 UA伪装：主流浏览器头，绕过更严苛的反爬拦截（因为有些站台会将自写的 UA 判为脚本拦截）
+        builder.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
         // 智能判断：检测出爬虫目标是高阶域名的，拦截下来后注入用户的合法 API Key (针对 ComicVine 服务)
         val httpUrl = originalRequest.url

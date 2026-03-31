@@ -91,6 +91,9 @@ fun BookshelfScreen(
                             IconButton(onClick = onSettingsClick) {
                                 Icon(Icons.Default.Settings, contentDescription = "设置")
                             }
+                            IconButton(onClick = { viewModel.scanAllFolders() }) {
+                                Icon(Icons.Default.Refresh, contentDescription = "全局扫描同步")
+                            }
                             IconButton(onClick = { showSortMenu = true }) {
                                 Icon(Icons.AutoMirrored.Filled.List, contentDescription = "排序")
                             }

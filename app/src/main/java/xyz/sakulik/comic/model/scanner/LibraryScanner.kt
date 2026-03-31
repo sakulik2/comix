@@ -14,7 +14,7 @@ import java.util.UUID
 
 class LibraryScanner(private val context: Context) {
     private val dao = AppDatabase.getDatabase(context).comicDao()
-    private val coverDir = File(context.cacheDir, "covers").apply { mkdirs() }
+    private val coverDir = File(context.filesDir, "covers").apply { mkdirs() }
 
     private val _scanProgress = MutableStateFlow<String?>(null)
     val scanProgress = _scanProgress.asStateFlow()

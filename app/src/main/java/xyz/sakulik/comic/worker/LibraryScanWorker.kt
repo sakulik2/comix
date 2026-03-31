@@ -33,69 +33,105 @@ class LibraryScanWorker(
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-        val uriString = inputData.getString(KEY_URI) ?: return@withContext androidx.work.ListenableWorker.Result.failure()
-        val uri = Uri.parse(uriString)
-
-        val rootTree = DocumentFile.fromTreeUri(applicationContext, uri) ?: return@withContext androidx.work.ListenableWorker.Result.failure()
-        
         val comicDao = AppDatabase.getDatabase(applicationContext).comicDao()
+        val contentResolver = applicationContext.contentResolver
 
-        // 传递初始通讯波
-        setProgress(workDataOf(PROGRESS_MSG to "准备潜入目录层级: ${rootTree.name}"))
-
-        try {
-            val allFiles = traverseTree(rootTree)
-            val total = allFiles.size
-            if (total == 0) {
-                setProgress(workDataOf(PROGRESS_MSG to "空雷达！这里面根本没有漫画。"))
-                return@withContext Result.success()
-            }
-
-            allFiles.forEachIndexed { index, file ->
-                // 发回地面的声纳回波（UI 层监听这里就能看到平滑进度条跑动！）
-                setProgress(workDataOf(PROGRESS_MSG to "正在解析 ($index/$total) : ${file.name}"))
-
-                // ========== 核心 3 步走架构 ========== //
-                val originalName = file.name ?: "Unknown"
-                
-                // 1. 无情粉碎正则阵
-                val parsed = ComicNameParser.parse(originalName)
-                
-                // 获取文件扩展名
-                val extension = originalName.substringAfterLast('.', "").lowercase()
-
-                // 2. 剥出 0 帧缩略图以 WebP 静止态保护显存
-                val coverCacheFile = File(applicationContext.cacheDir, "covers_${System.nanoTime()}.webp")
-                CoverExtractor.extractCover(applicationContext, file.uri, extension, coverCacheFile)
-
-                // 3. 将其供奉入 Room 神龛
-                val entity = ComicEntity(
-                    title = originalName,
-                    uri = file.uri.toString(),
-                    extension = extension,
-                    coverCachePath = if (coverCacheFile.exists()) coverCacheFile.absolutePath else null,
-                    seriesName = parsed.seriesName,
-                    region = parsed.region,
-                    format = parsed.format,
-                    issueNumber = parsed.issueNumber,
-                    volumeNumber = parsed.volumeNumber,
-                    addedTime = System.currentTimeMillis()
-                )
-                comicDao.insert(entity)
-            }
-
-            setProgress(workDataOf(PROGRESS_MSG to "大获全胜！共降准录入 ${total} 份图鉴。"))
-            androidx.work.ListenableWorker.Result.success()
-
-        } catch (e: Exception) {
-            e.printStackTrace()
-            androidx.work.ListenableWorker.Result.failure(workDataOf("error" to e.localizedMessage))
+        // 1. 获取要扫描的范围。如果有传入指定的 URI，则只扫这个；如果没有，则扫所有历史授权挂载点 (全量自动化)
+        val uriString = inputData.getString(KEY_URI)
+        val targetUris = if (uriString != null) {
+            listOf(Uri.parse(uriString))
+        } else {
+            contentResolver.persistedUriPermissions.map { it.uri }
         }
+
+        if (targetUris.isEmpty()) {
+            setProgress(workDataOf(PROGRESS_MSG to "未找到授权扫描的目录，请先添加挂载点。"))
+            return@withContext Result.success()
+        }
+
+        setProgress(workDataOf(PROGRESS_MSG to "准备扫描 ${targetUris.size} 个授权目录..."))
+
+        // 存活的独立文件列表（防重入哈希）
+        val aliveUriStrings = mutableSetOf<String>()
+        var foundCount = 0
+
+        // 阶段一：新资源入库与已存在验证
+        for (treeUri in targetUris) {
+            val rootTree = DocumentFile.fromTreeUri(applicationContext, treeUri) ?: continue
+            val allFiles = traverseTree(rootTree)
+            
+            allFiles.forEachIndexed { index, file ->
+                val fileUriStr = file.uri.toString()
+                aliveUriStrings.add(fileUriStr)
+                foundCount++
+
+                setProgress(workDataOf(PROGRESS_MSG to "探测中 ($foundCount) : ${file.name}"))
+
+                // [性能锁与自愈矩阵] 检查是否已入库，或其封面是否被旧版机制留在 cacheDir 遭系统清场
+                val existing = comicDao.getComicByUri(fileUriStr)
+                // 触发条件：新书，或者是老书但曾有封面物理文件却离奇蒸发了
+                val needExtract = existing == null || (existing.coverCachePath != null && !File(existing.coverCachePath).exists())
+                
+                if (needExtract) {
+                    val originalName = file.name ?: "Unknown"
+                    val parsed = ComicNameParser.parse(originalName)
+                    val extension = originalName.substringAfterLast('.', "").lowercase()
+
+                    // [防丢改] 强制存入 filesDir 持久保存，而不是用随时被杀的 cacheDir
+                    val coverDir = File(applicationContext.filesDir, "covers").apply { mkdirs() }
+                    val coverFile = File(coverDir, "${java.util.UUID.randomUUID()}.webp")
+                    
+                    val extractSuccess = CoverExtractor.extractCover(applicationContext, file.uri, extension, coverFile)
+                    val newCoverPath = if (extractSuccess && coverFile.exists()) coverFile.absolutePath else null
+
+                    if (existing == null) {
+                        val entity = ComicEntity(
+                            title = originalName,
+                            uri = fileUriStr,
+                            extension = extension,
+                            coverCachePath = newCoverPath,
+                            seriesName = parsed.seriesName,
+                            region = parsed.region,
+                            format = parsed.format,
+                            issueNumber = parsed.issueNumber,
+                            volumeNumber = parsed.volumeNumber,
+                            addedTime = System.currentTimeMillis()
+                        )
+                        comicDao.insert(entity)
+                    } else {
+                        // [无损抢救] 如果书本早就在库里，只是封面被系统吞了，那么只换封面，绝不干扰辛苦留下的阅读进度！
+                        comicDao.update(existing.copy(coverCachePath = newCoverPath))
+                    }
+                }
+            }
+        }
+
+        // 阶段二：废墟自动清理（严格镜像剔除）
+        setProgress(workDataOf(PROGRESS_MSG to "正在比对数据，清理物理剥离项..."))
+        val allDbComics = comicDao.getAllComicsUnordered()
+        var deletedCount = 0
+
+        for (comic in allDbComics) {
+            // [安全判定]：如果漫画的 URI 不属于本次全量扫描探测到的活体 URI，
+            // 并且我们物理检查它确实不存在，则证明它被外部工具移除了。无情销毁！
+            if (!aliveUriStrings.contains(comic.uri)) {
+                // 退路检查：也许是在一个我们没有扫描权限的孤儿路径？
+                // 如果是用户全扫，并且文件确实不存在，就杀。
+                val doc = DocumentFile.fromSingleUri(applicationContext, Uri.parse(comic.uri))
+                if (doc == null || !doc.exists()) {
+                    // 同时删除无用的本地封面残躯
+                    comic.coverCachePath?.let { File(it).delete() }
+                    comicDao.delete(comic)
+                    deletedCount++
+                }
+            }
+        }
+
+        val deleteMsg = if(deletedCount > 0) "，移除了 $deletedCount 本死链" else ""
+        setProgress(workDataOf(PROGRESS_MSG to "同步结束！共校验 $foundCount 本图鉴$deleteMsg。"))
+        return@withContext Result.success()
     }
 
-    /**
-     * 递归潜水员
-     */
     private fun traverseTree(doc: DocumentFile): List<DocumentFile> {
         val result = mutableListOf<DocumentFile>()
         doc.listFiles().forEach { child ->
