@@ -7,6 +7,7 @@ build/
 *.kotlin_module
 
 # Android Studio / IntelliJ IDEA
+.vscode/
 .idea/
 *.iml
 *.iws
