@@ -1,0 +1,38 @@
+# Gradle files
+.gradle/
+build/
+
+# Kotlin
+/build
+*.kotlin_module
+
+# Android Studio / IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+/out/
+/captures/
+/google-services.json
+
+# Local configuration files
+local.properties
+
+# Log files
+*.log
+
+# Android Profiler
+*.hprof
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# APKs, AABs, and Proguard mappings
+*.apk
+*.aab
+/app/build/
+/app/release/
+
+# KSP generated files (Usually handled by build/ but being explicit is safer)
+**/build/generated/ksp/
