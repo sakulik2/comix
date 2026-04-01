@@ -136,7 +136,7 @@ class LibraryScanWorker(
 
     private fun traverseTree(doc: DocumentFile): List<DocumentFile> {
         val result = mutableListOf<DocumentFile>()
-        doc.listFiles().forEach { child ->
+        doc.listFiles()?.forEach { child ->
             if (child.isDirectory) {
                 result.addAll(traverseTree(child))
             } else {

@@ -57,6 +57,8 @@ class BookshelfViewModel(
     application: Application,
     private val dao: ComicDao
 ) : AndroidViewModel(application) {
+
+    private val sharedOkHttpClient = OkHttpClient()
     
     init {
         // 冷启动即刻自动排查全部记录与图鉴，实现绝对同步
@@ -246,26 +248,25 @@ class BookshelfViewModel(
                 best.coverUrl?.let { url ->
                     try {
                         // [网络层防护] ComicVine / Bangumi 往往拦截默认空 User-Agent 的裸请求
-                        val client = OkHttpClient()
                         val request = Request.Builder()
                             .url(url)
                             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                             .build()
-                        val response = client.newCall(request).execute()
-                        val bytes = response.body?.bytes()
-                        
-                        if (bytes != null && response.isSuccessful) {
-                            // [格式与毁损防护] 经过原生 BitmapFactory 解构压缩，彻底杜绝服务器传回 JPG 却被盲目盖上 .webp 后缀导致 Coil 框架解析雪崩的隐患。
-                            val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                            if (bitmap != null) {
-                                val file = File(getApplication<Application>().filesDir, "covers/${UUID.randomUUID()}.webp")
-                                file.parentFile?.mkdirs()
-                                java.io.FileOutputStream(file).use { out ->
-                                    @Suppress("DEPRECATION")
-                                    bitmap.compress(android.graphics.Bitmap.CompressFormat.WEBP, 85, out)
+                        sharedOkHttpClient.newCall(request).execute().use { response ->
+                            val bytes = response.body?.bytes()
+                            if (bytes != null && response.isSuccessful) {
+                                // [格式与毁损防护] 经过原生 BitmapFactory 解构压缩，彻底杜绝服务器传回 JPG 却被盲目盖上 .webp 后缀导致 Coil 框架解析雪崩的隐患。
+                                val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                if (bitmap != null) {
+                                    val file = File(getApplication<Application>().filesDir, "covers/${UUID.randomUUID()}.webp")
+                                    file.parentFile?.mkdirs()
+                                    java.io.FileOutputStream(file).use { out ->
+                                        @Suppress("DEPRECATION")
+                                        bitmap.compress(android.graphics.Bitmap.CompressFormat.WEBP, 85, out)
+                                    }
+                                    bitmap.recycle()
+                                    finalCoverPath = file.absolutePath
                                 }
-                                bitmap.recycle()
-                                finalCoverPath = file.absolutePath
                             }
                         }
                     } catch (e: Exception) { e.printStackTrace() }

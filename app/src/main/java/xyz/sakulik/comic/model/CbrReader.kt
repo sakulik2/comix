@@ -29,6 +29,9 @@ class CbrReader(
         get() = fileHeaders.size
 
     override suspend fun getPage(index: Int): PageResult = withContext(Dispatchers.IO) {
+        if (index < 0 || index >= fileHeaders.size) {
+            throw IndexOutOfBoundsException("Page index $index out of range [0, ${fileHeaders.size})")
+        }
         val header = fileHeaders[index]
         val outFile = File(cacheDir, "cbr_page_$index.img")
 

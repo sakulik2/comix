@@ -99,13 +99,14 @@ class ScrapeViewModel(
             info.coverUrl?.let { url ->
                 try {
                     val request = okhttp3.Request.Builder().url(url).build()
-                    val response = okHttpClient.newCall(request).execute()
-                    val bytes = response.body?.bytes()
-                    if (bytes != null && response.isSuccessful) {
-                        val file = File(getApplication<Application>().cacheDir, "covers/${UUID.randomUUID()}.webp")
-                        file.parentFile?.mkdirs()
-                        file.writeBytes(bytes)
-                        finalCoverPath = file.absolutePath
+                    okHttpClient.newCall(request).execute().use { response ->
+                        val bytes = response.body?.bytes()
+                        if (bytes != null && response.isSuccessful) {
+                            val file = File(getApplication<Application>().cacheDir, "covers/${UUID.randomUUID()}.webp")
+                            file.parentFile?.mkdirs()
+                            file.writeBytes(bytes)
+                            finalCoverPath = file.absolutePath
+                        }
                     }
                 } catch (e: Exception) { e.printStackTrace() }
             }

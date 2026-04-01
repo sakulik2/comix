@@ -146,7 +146,7 @@ class LocalArchivePageLoader(
     private fun ensureCbrExtracted() {
         if (activeArchive != null) return
         
-        val tempFile = File(context.cacheDir, "reader_${uri.hashCode()}.cbr")
+        val tempFile = File(context.cacheDir, "reader_${java.util.UUID.randomUUID()}.cbr")
         if (!tempFile.exists()) {
             context.contentResolver.openInputStream(uri)?.use { input ->
                 tempFile.outputStream().use { output -> input.copyTo(output) }

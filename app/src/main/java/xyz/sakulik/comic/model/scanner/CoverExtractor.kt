@@ -31,26 +31,26 @@ object CoverExtractor {
 
     private fun extractPdfCover(context: Context, uri: Uri, outPath: File): Boolean {
         val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return false
-        val renderer = PdfRenderer(pfd)
-        if (renderer.pageCount > 0) {
-            val page = renderer.openPage(0)
-            // 生成缩略图尺寸
-            val scale = 400f / page.width.coerceAtLeast(1)
-            val w = (page.width * scale).toInt().coerceAtLeast(1)
-            val h = (page.height * scale).toInt().coerceAtLeast(1)
-            
-            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            bitmap.eraseColor(android.graphics.Color.WHITE)
-            
-            val matrix = Matrix().apply { postScale(scale, scale) }
-            page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-            page.close()
-            
-            saveBitmapToWebp(bitmap, outPath)
-            bitmap.recycle()
+        pfd.use {
+            PdfRenderer(pfd).use { renderer ->
+                if (renderer.pageCount > 0) {
+                    val page = renderer.openPage(0)
+                    val scale = 400f / page.width.coerceAtLeast(1)
+                    val w = (page.width * scale).toInt().coerceAtLeast(1)
+                    val h = (page.height * scale).toInt().coerceAtLeast(1)
+
+                    val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                    bitmap.eraseColor(android.graphics.Color.WHITE)
+
+                    val matrix = Matrix().apply { postScale(scale, scale) }
+                    page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    page.close()
+
+                    saveBitmapToWebp(bitmap, outPath)
+                    bitmap.recycle()
+                }
+            }
         }
-        renderer.close()
-        pfd.close()
         return outPath.exists()
     }
 
