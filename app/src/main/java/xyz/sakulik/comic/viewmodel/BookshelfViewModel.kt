@@ -9,12 +9,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.util.Log
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import xyz.sakulik.comic.model.preferences.SettingsDataStore
 import xyz.sakulik.comic.model.db.ComicDao
 import xyz.sakulik.comic.model.db.ComicEntity
 import xyz.sakulik.comic.model.db.ComicFormat
 import xyz.sakulik.comic.model.db.ComicRegion
+import xyz.sakulik.comic.model.db.ComicSource
+import xyz.sakulik.comic.model.network.ComicApiService
+import xyz.sakulik.comic.model.network.RetrofitClient
 import xyz.sakulik.comic.model.metadata.FilenameCleaner
 import xyz.sakulik.comic.model.metadata.MetadataRepository
 import xyz.sakulik.comic.model.metadata.ScrapeStrategy
@@ -70,6 +75,10 @@ class BookshelfViewModel(
     private val _selectedFormatFilter = MutableStateFlow<ComicFormat?>(null)
     val selectedFormatFilter = _selectedFormatFilter.asStateFlow()
 
+    // 云端同步开关状态
+    val remoteEnabled = SettingsDataStore.getRemoteEnabledFlow(application)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
     // ======= 核心重构：打通 WorkManager 返回的数据管道 =======
     val scanProgress: StateFlow<String?> = WorkManager.getInstance(application)
         .getWorkInfosByTagFlow("SCAN_LIBRARY_WORK")
@@ -94,10 +103,11 @@ class BookshelfViewModel(
         _sortOrder,
         _searchQuery,
         _selectedRegionFilter,
-        _selectedFormatFilter
-    ) { order, query, regionFilter, formatFilter ->
-        Triple(Pair(order, query), regionFilter, formatFilter)
-    }.flatMapLatest { (orderQuery, regionFilter, formatFilter) ->
+        _selectedFormatFilter,
+        remoteEnabled
+    ) { order, query, regionFilter, formatFilter, remoteEnabled ->
+        Quadruple(Pair(order, query), regionFilter, formatFilter, remoteEnabled)
+    }.flatMapLatest { (orderQuery, regionFilter, formatFilter, remoteEnabled) ->
         val (order, query) = orderQuery
         // 发掘底层原始列表
         val sourceFlow = if (query.isNotBlank()) {
@@ -110,7 +120,7 @@ class BookshelfViewModel(
             }
         }
 
-        souceRefine(sourceFlow, regionFilter, formatFilter)
+        souceRefine(sourceFlow, regionFilter, formatFilter, remoteEnabled)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -118,10 +128,16 @@ class BookshelfViewModel(
     )
     
     // 私有提炼流水线装配工段
-    private fun souceRefine(sourceFlow: Flow<List<ComicEntity>>, regionFilter: ComicRegion?, formatFilter: ComicFormat?): Flow<List<BookshelfItem>> {
+    private fun souceRefine(sourceFlow: Flow<List<ComicEntity>>, regionFilter: ComicRegion?, formatFilter: ComicFormat?, remoteEnabled: Boolean): Flow<List<BookshelfItem>> {
         return sourceFlow.map { rawList ->
             // 第一闸刀：切除掉多维选项不匹配的书籍
             var filteredList = rawList
+            
+            // 是否根据全局开关隐藏云端书籍
+            if (!remoteEnabled) {
+                filteredList = filteredList.filter { it.source != ComicSource.REMOTE }
+            }
+
             if (regionFilter != null) {
                 // 精准打击：不再接受 UNKNOWN 混入已定义的分类标签
                 filteredList = filteredList.filter { it.region == regionFilter }
@@ -290,6 +306,106 @@ class BookshelfViewModel(
     }
 
     fun clearScrapeState() { _autoScrapeState.value = AutoScrapeState.Idle }
+
+    fun saveCloudApi(url: String) {
+        viewModelScope.launch {
+            SettingsDataStore.saveComicApiBaseUrl(getApplication(), url)
+        }
+    }
+
+    /**
+     * 【云端同步核心】 从服务器抓取最新的漫画列表并同步至本地书架。
+     */
+    fun syncRemoteLibrary() {
+        viewModelScope.launch {
+            Log.d("BookshelfSync", "开始云端同步...")
+            _autoScrapeState.value = AutoScrapeState.Loading(-1L)
+            try {
+                val context = getApplication<Application>()
+                val baseUrl = SettingsDataStore.getComicApiBaseUrlFlow(context).firstOrNull() 
+                    ?: "https://comix.sakulik.xyz/"
+                
+                Log.d("BookshelfSync", "使用 BaseURL: $baseUrl")
+
+                val apiService = RetrofitClient.createService(
+                    context = context,
+                    baseUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/",
+                    serviceClass = ComicApiService::class.java
+                )
+
+                val remoteComics = apiService.getComics()
+                Log.d("BookshelfSync", "获取到 ${remoteComics.size} 本远程漫画")
+                
+                withContext(Dispatchers.IO) {
+                    remoteComics.forEach { item ->
+                        val existing = dao.getComicByLocation(item.id)
+                        
+                        // 统一封面处理：拼接完整 URL
+                        val absoluteCoverUrl = if (item.coverUrl.startsWith("http")) {
+                            item.coverUrl
+                        } else {
+                            val normalizedBase = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+                            val relativePath = item.coverUrl.removePrefix("/")
+                            "$normalizedBase$relativePath"
+                        }
+
+                        if (existing == null) {
+                            Log.d("BookshelfSync", "新增漫画: ${item.originalName}")
+                            val newComic = ComicEntity(
+                                title = item.originalName.substringBeforeLast("."),
+                                uri = absoluteCoverUrl,
+                                extension = item.originalName.substringAfterLast(".", "cbr"),
+                                totalPages = item.totalPages,
+                                source = ComicSource.REMOTE,
+                                location = item.id,
+                                coverCachePath = absoluteCoverUrl,
+                                seriesName = item.originalName.substringBeforeLast(".")
+                            )
+                            dao.insert(newComic)
+                        } else {
+                            Log.d("BookshelfSync", "更新记录: ${item.originalName}")
+                            val updated = existing.copy(
+                                totalPages = item.totalPages,
+                                coverCachePath = absoluteCoverUrl
+                            )
+                            dao.update(updated)
+                        }
+                    }
+                }
+                Log.d("BookshelfSync", "同步成功完成")
+                _autoScrapeState.value = AutoScrapeState.Done(-1L)
+            } catch (e: Exception) {
+                Log.e("BookshelfSync", "同步失败: ${e.message}", e)
+                _autoScrapeState.value = AutoScrapeState.Error(-1L, "同步失败: ${e.localizedMessage}")
+            }
+        }
+    }
+    fun saveRemoteEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            SettingsDataStore.saveRemoteEnabled(getApplication(), enabled)
+        }
+    }
+
+    /**
+     * 【清场机制】 允许用户一键销毁所有云端索引，还一个纯净的本地库。
+     */
+    fun clearRemoteLibrary() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                dao.deleteComicsBySource(ComicSource.REMOTE)
+            }
+        }
+    }
+}
+
+// 辅助数据结构
+data class Quadruple<out A, out B, out C, out D>(
+    val first: A,
+    val second: B,
+    val third: C,
+    val fourth: D
+) : java.io.Serializable {
+    override fun toString(): String = "($first, $second, $third, $fourth)"
 }
 
 sealed class AutoScrapeState {

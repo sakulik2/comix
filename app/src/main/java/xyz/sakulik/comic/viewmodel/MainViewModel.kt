@@ -16,6 +16,8 @@ import xyz.sakulik.comic.model.ComicBook
 import xyz.sakulik.comic.model.PdfReader
 import xyz.sakulik.comic.model.db.AppDatabase
 import xyz.sakulik.comic.model.db.ComicEntity
+import xyz.sakulik.comic.model.loader.ComicPageLoader
+import xyz.sakulik.comic.model.loader.ComicPageLoaderFactory
 import java.io.File
 import java.io.FileOutputStream
 
@@ -23,8 +25,15 @@ sealed class ComicState {
     object Idle : ComicState()
     object Loading : ComicState()
     data class Error(val message: String) : ComicState()
-    data class Ready(val pageCount: Int, val fileName: String, val extension: String, val uri: Uri) : ComicState()
+    data class Ready(
+        val pageCount: Int,
+        val fileName: String,
+        val extension: String,
+        val uri: Uri,
+        val loader: ComicPageLoader // 新增：混合加载引擎句柄
+    ) : ComicState()
 }
+
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -51,6 +60,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val dao by lazy { AppDatabase.getDatabase(application).comicDao() }
     private var currentEntity: ComicEntity? = null
+    private var pageLoader: ComicPageLoader? = null
+    private val loaderFactory = ComicPageLoaderFactory(application)
 
     fun openComic(comic: ComicEntity) {
         currentEntity = comic
@@ -67,11 +78,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val fileName = comicTitle
                 val ext = fileName.substringAfterLast('.', "").lowercase()
 
-                val pageCount = xyz.sakulik.comic.model.scanner.ComicPageLoader.getPageCount(context, uri, ext)
-                if (pageCount == 0) throw IllegalStateException("无法解析页面书目，该格式 ($ext) 不被支持或文件已损坏！")
+                // 【核心变阵】使用工厂实例化加载引擎
+                val entity = currentEntity ?: throw IllegalStateException("未指定任何漫画实体！")
+                val loader = loaderFactory.create(entity)
+                pageLoader = loader
+
+                val pageCount = loader.getPageCount()
+                if (pageCount == 0) throw IllegalStateException("无法解析页面书目，该格式不被支持或文件已损坏！")
 
                 // 因为不需要实例化笨重的全量解压缩器，所以现在打开一本包含几百张图的文件，可以做到近乎零秒耗时。
-                _state.value = ComicState.Ready(pageCount, fileName, ext, uri)
+                _state.value = ComicState.Ready(pageCount, fileName, ext, uri, loader)
             } catch (e: Exception) {
                 e.printStackTrace()
                 _state.value = ComicState.Error(e.message ?: "解析失败，可能是文件损坏或格式不支持")
@@ -97,5 +113,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         clearCache()
+        pageLoader?.close()
     }
 }

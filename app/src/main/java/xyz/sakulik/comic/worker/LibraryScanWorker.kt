@@ -95,7 +95,9 @@ class LibraryScanWorker(
                             format = parsed.format,
                             issueNumber = parsed.issueNumber,
                             volumeNumber = parsed.volumeNumber,
-                            addedTime = System.currentTimeMillis()
+                            addedTime = System.currentTimeMillis(),
+                            source = xyz.sakulik.comic.model.db.ComicSource.LOCAL,
+                            location = fileUriStr
                         )
                         comicDao.insert(entity)
                     } else {

@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import xyz.sakulik.comic.model.db.ComicDao
 import xyz.sakulik.comic.model.db.ComicEntity
+import xyz.sakulik.comic.model.loader.ComicPageLoader
+import xyz.sakulik.comic.model.loader.ComicPageLoaderFactory
 import xyz.sakulik.comic.navigation.ReaderRoute
 import java.io.File
 import androidx.navigation.toRoute
@@ -40,6 +42,10 @@ class ReaderViewModel(
     var currentEntity: ComicEntity? = null
         private set
 
+    // 核心加载引擎句柄
+    private var pageLoader: ComicPageLoader? = null
+    private val loaderFactory = ComicPageLoaderFactory(application)
+
     init {
         if (!comicCacheDir.exists()) comicCacheDir.mkdirs()
         initialLoading()
@@ -63,10 +69,15 @@ class ReaderViewModel(
 
                 clearCache()
                 val context = getApplication<Application>()
-                val pageCount = xyz.sakulik.comic.model.scanner.ComicPageLoader.getPageCount(context, uri, ext)
-                if (pageCount == 0) throw IllegalStateException("解析图集书目失败，引擎不支持 ($ext) 或档案腐败！")
+                
+                // 【核心变阵】通过工厂实例化符合数据源逻辑的加载引擎
+                val loader = loaderFactory.create(entity)
+                pageLoader = loader
+                
+                val pageCount = loader.getPageCount()
+                if (pageCount == 0) throw IllegalStateException("解析图集书目失败，引擎不支持或档案文件损坏！")
 
-                _state.value = ComicState.Ready(pageCount, entity.title, ext, uri)
+                _state.value = ComicState.Ready(pageCount, entity.title, ext, uri, loader)
             } catch (e: Exception) {
                 e.printStackTrace()
                 _state.value = ComicState.Error(e.message ?: "解析失败，可能是文件损坏或格式不支持")
@@ -85,12 +96,14 @@ class ReaderViewModel(
         comicCacheDir.deleteRecursively()
         comicCacheDir.mkdirs()
         if (tempFile.exists()) tempFile.delete()
-        // 联动底层加载引擎，释放沉重的 CBR 物理备份
-        xyz.sakulik.comic.model.scanner.ComicPageLoader.clearActiveCache(getApplication())
+        // 通用清理：ReaderViewModel 的 clearCache 现在只关注 View 层级临时副本清理，
+        // 核心 Archive 生命周期现已移入 LocalArchivePageLoader.close()。
     }
 
     override fun onCleared() {
         super.onCleared()
         clearCache()
+        // 彻底切断底层物理连接与资源占用
+        pageLoader?.close()
     }
 }

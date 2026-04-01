@@ -127,8 +127,7 @@ fun ComicAppNavHost() {
                     }
                     is xyz.sakulik.comic.viewmodel.ComicState.Ready -> {
                         xyz.sakulik.comic.ui.ReaderScreen(
-                            uri = s.uri,
-                            extension = s.extension,
+                            loader = s.loader,
                             pageCount = s.pageCount,
                             comicTitle = s.fileName,
                             initialPage = readerViewModel.matchedInitialPage,
@@ -168,8 +167,16 @@ fun ComicAppNavHost() {
 
         // ========== [页面 6: 全局设置中心] ==========
         composable<SettingsRoute> {
+            val context = androidx.compose.ui.platform.LocalContext.current.applicationContext as Application
+            val bookshelfViewModel = viewModel {
+                BookshelfViewModel(context, AppDatabase.getDatabase(context).comicDao())
+            }
+            
             xyz.sakulik.comic.ui.settings.SettingsScreen(
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onClearRemoteLibrary = { 
+                    bookshelfViewModel.clearRemoteLibrary()
+                }
             )
         }
     }

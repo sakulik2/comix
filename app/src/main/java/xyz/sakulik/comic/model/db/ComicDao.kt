@@ -25,6 +25,9 @@ interface ComicDao {
     @Query("SELECT * FROM comic_books WHERE id = :id LIMIT 1")
     suspend fun getComicById(id: Long): ComicEntity?
 
+    @Query("SELECT * FROM comic_books WHERE location = :location LIMIT 1")
+    suspend fun getComicByLocation(location: String): ComicEntity?
+
     @Query("SELECT * FROM comic_books")
     suspend fun getAllComicsUnordered(): List<ComicEntity>
 
@@ -42,4 +45,7 @@ interface ComicDao {
 
     @Query("UPDATE comic_books SET currentPage = :page, totalPages = :total, lastReadTime = :time WHERE id = :id")
     suspend fun updateProgress(id: Long, page: Int, total: Int, time: Long): Int
+
+    @Query("DELETE FROM comic_books WHERE source = :source")
+    suspend fun deleteComicsBySource(source: ComicSource): Int
 }

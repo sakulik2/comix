@@ -55,29 +55,40 @@ object CoverExtractor {
     }
 
     private fun extractCbzCover(context: Context, uri: Uri, outPath: File): Boolean {
-        // 使用流式读取，避免将完整的 CBZ 文件拷贝到本地
+        // [双程探针逻辑] 第一轮：找出字典序最靠前的图片文件名
+        var bestName: String? = null
         context.contentResolver.openInputStream(uri)?.use { input ->
             val zis = ZipInputStream(input)
             var entry = zis.nextEntry
             while (entry != null) {
                 if (!entry.isDirectory && isImage(entry.name)) {
-                    // [防裂断机制] 将完整的字节暂存入内存，彻底杜绝 ZIP 流读取时被 BitmapFactory 中途抛弃的玄学 BUG
+                    if (bestName == null || entry.name.lowercase() < bestName!!.lowercase()) {
+                        bestName = entry.name
+                    }
+                }
+                zis.closeEntry()
+                entry = zis.nextEntry
+            }
+        } ?: return false
+
+        if (bestName == null) return false
+
+        // 第二轮：按名索骥提取该图片数据
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            val zis = ZipInputStream(input)
+            var entry = zis.nextEntry
+            while (entry != null) {
+                if (entry.name == bestName) {
                     val bytes = zis.readBytes()
-                    
-                    // [防 OOM 测绘] 预扫尺寸
                     val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-                    
-                    // [下采样] 封面无需原图，强制缩小以成倍节约内存
                     options.inSampleSize = calculateInSampleSize(options, 400, 600)
                     options.inJustDecodeBounds = false
-                    options.inPreferredConfig = Bitmap.Config.RGB_565 // 放弃透明通道，省一半显存
-                    
+                    options.inPreferredConfig = Bitmap.Config.RGB_565
                     val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
                     if (bitmap != null) {
                         saveBitmapToWebp(bitmap, outPath)
                         bitmap.recycle()
-                        zis.closeEntry()
                         return true
                     }
                 }
@@ -89,8 +100,9 @@ object CoverExtractor {
     }
 
     private fun extractCbrCover(context: Context, uri: Uri, outPath: File): Boolean {
-        // 由于 junrar 对流的支持有限，后台扫描时建立临时文件
-        val tempFile = File(context.cacheDir, "scan_temp.cbr")
+        // [隔离矩阵] 使用 UUID 命名临时文件，彻底阻断扫描任务间的竞态冲突 (Fix: 封面串号)
+        val sessionId = java.util.UUID.randomUUID().toString()
+        val tempFile = File(context.cacheDir, "scan_temp_$sessionId.cbr")
         try {
             context.contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(tempFile).use { output ->
@@ -101,15 +113,14 @@ object CoverExtractor {
             val archive = Archive(tempFile)
             val firstImage = archive.fileHeaders
                 .filter { !it.isDirectory && isImage(it.fileName) }
-                .minByOrNull { it.fileName }
+                .minByOrNull { it.fileName.lowercase() }
             
             if (firstImage != null) {
-                val tempImg = File(context.cacheDir, "scan_temp_img_${System.currentTimeMillis()}")
+                val tempImg = File(context.cacheDir, "scan_temp_img_$sessionId.tmp")
                 FileOutputStream(tempImg).use { out ->
                     archive.extractFile(firstImage, out)
                 }
                 
-                // [防 OOM 测绘]
                 val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeFile(tempImg.absolutePath, options)
                 options.inSampleSize = calculateInSampleSize(options, 400, 600)

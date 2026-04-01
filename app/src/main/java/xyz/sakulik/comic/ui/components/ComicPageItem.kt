@@ -15,9 +15,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import xyz.sakulik.comic.model.scanner.ComicPageLoader
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
+import xyz.sakulik.comic.model.loader.ComicPageLoader
 import xyz.sakulik.comic.ui.ZoomableImage
 
 /**
@@ -25,24 +25,25 @@ import xyz.sakulik.comic.ui.ZoomableImage
  * 因为 ZoomableBox 会在此处发生作用，这里要起到承上启下的桥梁作用。
  */
 @Composable
-fun ComicPageItem(uri: Uri, extension: String, pageIndex: Int, onScaleChanged: (Float) -> Unit, onTap: () -> Unit) {
+fun ComicPageItem(
+    loader: ComicPageLoader, 
+    pageIndex: Int, 
+    onScaleChanged: (Float) -> Unit, 
+    onTap: () -> Unit
+) {
     val context = LocalContext.current
-    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var pageData by remember { mutableStateOf<Any?>(null) }
     
     // 承载着这一块屏幕真正的渲染能力边界参数
     var containerSize by remember { mutableStateOf(Pair(0, 0)) }
 
-    // 当且仅当这一页面得到了分配给它的物理尺寸边界时，才呼叫深源层引擎释放出匹配的小于等于边框的图像流。
-    // 这将从根本上的物理底层彻底锁死了整本漫画发生 OOM 的可能！！
+    // 当且仅当这一页面得到了分配给它的物理尺寸边界时，才呼叫深源层引擎释放出匹配的数据流。
     LaunchedEffect(containerSize, pageIndex) {
-        if (containerSize.first > 0 && containerSize.second > 0 && bitmap == null) {
-            bitmap = xyz.sakulik.comic.model.scanner.ComicPageLoader.loadPageBitmap(
-                context = context,
-                uri = uri,
-                extension = extension,
+        if (containerSize.first > 0 && containerSize.second > 0 && pageData == null) {
+            pageData = loader.getPageData(
                 pageIndex = pageIndex,
-                reqWidth = containerSize.first,
-                reqHeight = containerSize.second
+                width = containerSize.first,
+                height = containerSize.second
             )
         }
     }
@@ -58,15 +59,26 @@ fun ComicPageItem(uri: Uri, extension: String, pageIndex: Int, onScaleChanged: (
             },
         contentAlignment = Alignment.Center
     ) {
-        val b = bitmap
-        if (b == null) {
-            CircularProgressIndicator()
-        } else {
-            ZoomableImage(
-                bitmap = b,
-                onScaleChanged = onScaleChanged,
-                onTap = onTap
-            )
+        when (val data = pageData) {
+            null -> {
+                CircularProgressIndicator()
+            }
+            is Bitmap -> {
+                ZoomableImage(
+                    bitmap = data,
+                    onScaleChanged = onScaleChanged,
+                    onTap = onTap
+                )
+            }
+            is String -> {
+                // 云端模式：直接使用 Coil 加载 URL
+                AsyncImage(
+                    model = data,
+                    contentDescription = "云端漫画页",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit
+                )
+            }
         }
     }
 }

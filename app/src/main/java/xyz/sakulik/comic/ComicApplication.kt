@@ -4,7 +4,6 @@ import android.app.Application
 import xyz.sakulik.comic.model.db.AppDatabase
 
 import java.io.File
-import xyz.sakulik.comic.model.scanner.ComicPageLoader
 
 /**
  * 应用级全局生命周期管控器。
@@ -17,11 +16,15 @@ class ComicApplication : Application() {
         // 显式触发 Room 数据库的初始化动作
         AppDatabase.getDatabase(this)
 
-        // 【冷启动大作战】 每次重启 App 时清理任何非物理崩溃导致的缓存残留
+        // 每次重启 App 时清理任何非物理崩溃导致的缓存残留
         try {
-            ComicPageLoader.clearActiveCache(this)
-            // 清理可能存在的扫描残留 scanner_buffer.cbr 和其他历史 tmp
-            cacheDir.listFiles { _, name -> name.endsWith(".cbr") || name.endsWith(".tmp") }?.forEach { 
+            // 清理所有 reader_ 开头的缓存文件、scanner_buffer 以及其他历史 .cbr/.tmp 残留
+            cacheDir.listFiles { _, name -> 
+                name.startsWith("reader_") || 
+                name.startsWith("scanner_") || 
+                name.endsWith(".cbr") || 
+                name.endsWith(".tmp") 
+            }?.forEach { 
                 it.delete() 
             }
         } catch (e: Exception) {

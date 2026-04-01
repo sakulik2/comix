@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
 import kotlinx.coroutines.launch
+import xyz.sakulik.comic.model.loader.ComicPageLoader
 import xyz.sakulik.comic.ui.components.ComicPageItem
 
 /**
@@ -31,8 +32,7 @@ import xyz.sakulik.comic.ui.components.ComicPageItem
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun ReaderScreen(
-    uri: Uri,
-    extension: String,
+    loader: ComicPageLoader,
     pageCount: Int,
     comicTitle: String,
     initialPage: Int,
@@ -90,8 +90,7 @@ fun ReaderScreen(
                 // 子项目剥离方向修正：无论往哪翻，画册原样不能被镜像
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                     ComicPageItem(
-                        uri = uri,
-                        extension = extension,
+                        loader = loader,
                         pageIndex = page,
                         // 承接深层组件冒泡上来的放大指令，稍微拉远一点 1.05 就认为是进入看图态
                         onScaleChanged = { scale -> 

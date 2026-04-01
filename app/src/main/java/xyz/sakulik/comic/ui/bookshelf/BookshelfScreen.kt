@@ -26,6 +26,7 @@ import coil.compose.AsyncImage
 import xyz.sakulik.comic.model.db.ComicEntity
 import xyz.sakulik.comic.model.db.ComicRegion
 import xyz.sakulik.comic.model.db.ComicFormat
+import xyz.sakulik.comic.model.db.ComicSource
 import xyz.sakulik.comic.viewmodel.AutoScrapeState
 import xyz.sakulik.comic.viewmodel.BookshelfItem
 import xyz.sakulik.comic.viewmodel.BookshelfViewModel
@@ -34,6 +35,7 @@ import xyz.sakulik.comic.viewmodel.SortOrder
 import java.io.File
 import androidx.activity.compose.BackHandler
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.input.pointer.pointerInput
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -49,8 +51,11 @@ fun BookshelfScreen(
     val scanProgress by viewModel.scanProgress.collectAsState()
     val selectedRegion by viewModel.selectedRegionFilter.collectAsState()
     val autoScrapeState by viewModel.autoScrapeState.collectAsState()
+    val remoteEnabled by viewModel.remoteEnabled.collectAsState()
 
     var showSortMenu by remember { mutableStateOf(false) }
+    var showAddMenu by remember { mutableStateOf(false) }
+    var showApiDialog by remember { mutableStateOf(false) }
     var openedSeries by remember { mutableStateOf<SeriesGroupData?>(null) }
     var contextComic by remember { mutableStateOf<ComicEntity?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -148,8 +153,77 @@ fun BookshelfScreen(
                 uri?.let { viewModel.addFolder(it) }
             }
             if (openedSeries == null) {
-                FloatingActionButton(onClick = { launcher.launch(null) }) {
-                    Icon(Icons.Default.Add, contentDescription = "扫描目录")
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // --- 展开后的分离漂浮 Widget (增加 MD3 顺滑动画) ---
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = showAddMenu,
+                        enter = androidx.compose.animation.expandVertically() + androidx.compose.animation.fadeIn(),
+                        exit = androidx.compose.animation.shrinkVertically() + androidx.compose.animation.fadeOut()
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.End,
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            if (remoteEnabled) {
+                                // 1. 远程云同步
+                                ExtendedFloatingActionButton(
+                                    onClick = { 
+                                        showAddMenu = false
+                                        viewModel.syncRemoteLibrary() 
+                                    },
+                                    icon = { 
+                                        val isLoading = autoScrapeState is AutoScrapeState.Loading && (autoScrapeState as AutoScrapeState.Loading).comicId == -1L
+                                        if (isLoading) CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                                        else Icon(Icons.Default.Refresh, null) 
+                                    },
+                                    text = { 
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("同步")
+                                            Spacer(Modifier.width(8.dp))
+                                            IconButton(
+                                                onClick = { 
+                                                    showAddMenu = false
+                                                    showApiDialog = true 
+                                                },
+                                                modifier = Modifier.size(20.dp)
+                                            ) {
+                                                Icon(Icons.Default.Settings, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                                            }
+                                        }
+                                    },
+                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            }
+                            // 按钮 1.5：手动配置（长按提示或独立小按钮，此处暂为独立小按钮或长按逻辑）
+                            // 为简化用户操作，我们在“同步”按钮下方增加一个微型配置入口，或者直接修改同步按钮行为
+                            // 2. 本地目录
+                            ExtendedFloatingActionButton(
+                                onClick = { 
+                                    showAddMenu = false
+                                    launcher.launch(null) 
+                                },
+                                icon = { Icon(Icons.Default.Folder, null) },
+                                text = { Text("本地") },
+                                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        }
+                    }
+
+                    // --- 主加号按钮 ---
+                    FloatingActionButton(
+                        onClick = { showAddMenu = !showAddMenu },
+                        containerColor = if (showAddMenu) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primaryContainer
+                    ) {
+                        Icon(
+                            if (showAddMenu) Icons.Default.Close else Icons.Default.Add,
+                            contentDescription = "切换添加模式"
+                        )
+                    }
                 }
             }
         },
@@ -359,13 +433,59 @@ fun BookshelfScreen(
             }
         }
     }
+
+    // --- 云端 API 配置对话框 (MD3 标准样式) ---
+    if (showApiDialog) {
+        var inputUrl by remember { mutableStateOf("https://comix.sakulik.xyz/") }
+        AlertDialog(
+            onDismissRequest = { showApiDialog = false },
+            title = { Text("添加远程 API 地址", style = MaterialTheme.typography.titleMedium) },
+            text = {
+                Column {
+                    Text("请输入符合 Comix 规范的流媒体 API 基址：", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = inputUrl,
+                        onValueChange = { inputUrl = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        placeholder = { Text("http://api...") },
+                        leadingIcon = { Icon(Icons.Default.Link, contentDescription = null) }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (inputUrl.isNotBlank()) {
+                        viewModel.saveCloudApi(inputUrl)
+                        showApiDialog = false
+                    }
+                }) {
+                    Text("保存")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showApiDialog = false }) {
+                    Text("取消")
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = RoundedCornerShape(28.dp)
+        )
+    }
 }
 
 @Composable
 fun ComicSwimlaneItem(comic: ComicEntity, onClick: () -> Unit) {
     ElevatedCard(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick), shape = RoundedCornerShape(12.dp)) {
         Column {
-            val model = if (comic.coverCachePath != null && File(comic.coverCachePath).exists()) File(comic.coverCachePath) else null
+            val model = if (comic.source == ComicSource.REMOTE) {
+                comic.coverCachePath // 远程模式下直接使用 URL
+            } else if (comic.coverCachePath != null && File(comic.coverCachePath).exists()) {
+                File(comic.coverCachePath)
+            } else {
+                null
+            }
             Box(modifier = Modifier.aspectRatio(0.7f).fillMaxWidth()) {
                 AsyncImage(model = model, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 if (comic.totalPages > 0 && comic.currentPage > 0) {
@@ -382,7 +502,13 @@ fun ComicSwimlaneItem(comic: ComicEntity, onClick: () -> Unit) {
 fun ComicItem(comic: ComicEntity, onClick: () -> Unit, onLongClick: () -> Unit, isScrapingThis: Boolean) {
     ElevatedCard(modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick), shape = RoundedCornerShape(12.dp)) {
         Column {
-            val model = if (comic.coverCachePath != null && File(comic.coverCachePath).exists()) File(comic.coverCachePath) else null
+            val model = if (comic.source == ComicSource.REMOTE) {
+                comic.coverCachePath
+            } else if (comic.coverCachePath != null && File(comic.coverCachePath).exists()) {
+                File(comic.coverCachePath)
+            } else {
+                null
+            }
             Box(modifier = Modifier.aspectRatio(0.7f).fillMaxWidth()) {
                 AsyncImage(model = model, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 if (comic.totalPages > 0 && comic.currentPage > 0) {
@@ -399,7 +525,13 @@ fun ComicItem(comic: ComicEntity, onClick: () -> Unit, onLongClick: () -> Unit, 
 fun SeriesGroupItem(group: SeriesGroupData, onClick: () -> Unit) {
     ElevatedCard(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick), shape = RoundedCornerShape(12.dp)) {
         Column {
-            val model = if (group.coverComic.coverCachePath != null && File(group.coverComic.coverCachePath).exists()) File(group.coverComic.coverCachePath) else null
+            val model = if (group.coverComic.source == ComicSource.REMOTE) {
+                group.coverComic.coverCachePath
+            } else if (group.coverComic.coverCachePath != null && File(group.coverComic.coverCachePath).exists()) {
+                File(group.coverComic.coverCachePath)
+            } else {
+                null
+            }
             Box(modifier = Modifier.aspectRatio(0.7f).fillMaxWidth()) {
                 Box(modifier = Modifier.fillMaxSize().padding(end = 4.dp, top = 4.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant))
                 Box(modifier = Modifier.fillMaxSize().padding(start = 4.dp, bottom = 4.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {

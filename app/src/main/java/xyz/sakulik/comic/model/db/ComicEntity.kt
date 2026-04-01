@@ -3,7 +3,10 @@ package xyz.sakulik.comic.model.db
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "comic_books")
+@Entity(
+    tableName = "comic_books",
+    indices = [androidx.room.Index(value = ["location"], unique = true)]
+)
 data class ComicEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
@@ -29,5 +32,9 @@ data class ComicEntity(
     val format: ComicFormat = ComicFormat.UNKNOWN,
     val seriesName: String = "",     // 脱敏洗牌后的核心序列组名，用作折叠判定的唯一枢纽
     val issueNumber: Float? = null,  // 第几话/期，使用 Float 兼容 1.5 倍等增刊号
-    val volumeNumber: Float? = null  // 第几卷，大分册管理单元
+    val volumeNumber: Float? = null, // 第几卷，大分册管理单元
+
+    // Hybrid Architecture (Local + Cloud)
+    val source: ComicSource = ComicSource.LOCAL,
+    val location: String = "" // 如果 LOCAL，存本地文件绝对路径或 SAF Uri；如果 REMOTE，存服务端的 Comic ID 或基础 URL
 )
