@@ -105,14 +105,29 @@ fun ZoomableImage(
                                         onScaleChanged(newScale)
                                     }
 
-                                    // 只有在已放大或正在缩放时，才消费掉这个位移，否则由于不 Consume，Pager 会拿到它并翻页
-                                    if (scale.value > 1f || zoomChange != 1f) {
+                                    val maxOffsetX = (size.width * (scale.value - 1)) / 2
+                                    val maxOffsetY = (size.height * (scale.value - 1)) / 2
+                                    
+                                    // 【核心优化：边缘穿透】
+                                    // 判断当前是否在左右边界上。
+                                    // 如果用户尝试往左划(pan < 0)且已经在右边界(-max)上，或者尝试往右划且已经在左边界(max)上，
+                                    // 则不消费这个事件，让外层 Pager 拿到它实现翻页。
+                                    val isAtLeftEdge = offset.value.x >= maxOffsetX - 0.5f 
+                                    val isAtRightEdge = offset.value.x <= -maxOffsetX + 0.5f
+                                    val isPanningToNext = panChange.x < 0
+                                    val isPanningToPrev = panChange.x > 0
+                                    
+                                    val shouldConsume = if (scale.value > 1.05f) {
+                                        !( (isAtLeftEdge && isPanningToPrev) || (isAtRightEdge && isPanningToNext) )
+                                    } else {
+                                        zoomChange != 1f // 缩放本身还是得要消费的
+                                    }
+
+                                    if (shouldConsume) {
                                         event.changes.forEach { it.consume() }
                                     }
 
                                     if (scale.value > 1f) {
-                                        val maxOffsetX = (size.width * (scale.value - 1)) / 2
-                                        val maxOffsetY = (size.height * (scale.value - 1)) / 2
                                         val newOffset = Offset(
                                             x = (offset.value.x + panChange.x * scale.value).coerceIn(-maxOffsetX, maxOffsetX),
                                             y = (offset.value.y + panChange.y * scale.value).coerceIn(-maxOffsetY, maxOffsetY)

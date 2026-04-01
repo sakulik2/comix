@@ -126,18 +126,28 @@ fun ComicAppNavHost() {
                         }
                     }
                     is xyz.sakulik.comic.viewmodel.ComicState.Ready -> {
+                        val readerMode by readerViewModel.readerMode.collectAsState()
+                        val isImmersive by readerViewModel.isImmersive.collectAsState()
+                        val isSharpenEnabled by readerViewModel.isSharpenEnabled.collectAsState()
+
                         xyz.sakulik.comic.ui.ReaderScreen(
                             loader = s.loader,
+                            readerMode = readerMode,
                             pageCount = s.pageCount,
                             comicTitle = s.fileName,
                             initialPage = readerViewModel.matchedInitialPage,
                             isRtl = isRtl,
+                            isImmersive = isImmersive,
+                            isSharpenEnabled = isSharpenEnabled,
                             onPageChanged = { page ->
                                 readerViewModel.updateProgress(page, s.pageCount)
                             },
                             onBack = { navController.popBackStack() },
                             onScrapeClick = { /* 开启刮削面板 */ },
-                            onToggleRtl = { readerViewModel.toggleRtl() }
+                            onToggleRtl = { readerViewModel.toggleRtl() },
+                            onToggleSharpen = { readerViewModel.toggleSharpen() },
+                            onToggleReaderMode = { readerViewModel.toggleReaderMode() },
+                            onToggleImmersive = { readerViewModel.setImmersive(it) }
                         )
                     }
                     is xyz.sakulik.comic.viewmodel.ComicState.Error -> {

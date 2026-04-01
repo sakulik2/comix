@@ -35,10 +35,12 @@ class LibraryScanner(private val context: Context) {
                 val ext = name.substringAfterLast('.', "").lowercase()
                 if (ext in listOf("cbz", "cbr", "pdf", "zip", "rar")) {
                     val uri = file.uri.toString()
+                    val lastMod = file.lastModified()
+                    val size = file.length()
                     val existing = dao.getComicByUri(uri)
                     
-                    if (existing == null) {
-                        _scanProgress.value = "正在扫描: $name"
+                    if (existing == null || existing.lastModified != lastMod || existing.fileSize != size) {
+                        _scanProgress.value = "正在${if (existing == null) "扫描" else "更新"}: $name"
                         val coverFileName = UUID.randomUUID().toString() + ".webp"
                         val coverFile = File(coverDir, coverFileName)
                         val success = CoverExtractor.extractCover(context, file.uri, ext, coverFile)
@@ -73,7 +75,7 @@ class LibraryScanner(private val context: Context) {
 
                         // 为了排版好看与精准检索，title 被从杂乱名称中剥离后再基于解析数据重新格式组装！
                         val betterTitle = buildString {
-                            append(series)
+                            append(series ?: cleanTitle)
                             if (volNum != null) append(" Vol.${volNum}")
                             if (issueNum != null) append(" #${issueNum}")
                         }.trim()
@@ -92,9 +94,15 @@ class LibraryScanner(private val context: Context) {
                             summary = summary,
                             genres = genres,
                             publisher = publisher,
-                            rating = rating
+                            rating = rating,
+                            lastModified = lastMod,
+                            fileSize = size
                         )
-                        dao.insert(entity)
+                        if (existing == null) {
+                            dao.insert(entity)
+                        } else {
+                            dao.update(entity.copy(id = existing.id))
+                        }
                     }
                 }
             }

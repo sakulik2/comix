@@ -13,9 +13,17 @@ import xyz.sakulik.comic.model.db.ComicDao
 import xyz.sakulik.comic.model.db.ComicEntity
 import xyz.sakulik.comic.model.loader.ComicPageLoader
 import xyz.sakulik.comic.model.loader.ComicPageLoaderFactory
+import xyz.sakulik.comic.model.loader.LocalArchivePageLoader
+import xyz.sakulik.comic.model.loader.RemoteStreamPageLoader
 import xyz.sakulik.comic.navigation.ReaderRoute
 import java.io.File
 import androidx.navigation.toRoute
+enum class ReaderMode {
+    PAGER,      // 传统单页翻页
+    DUAL_PAGE,   // 横屏双页模式
+    WEBTOON     // 纵向卷轴条漫
+}
+
 class ReaderViewModel(
     application: Application,
     private val dao: ComicDao,
@@ -33,7 +41,29 @@ class ReaderViewModel(
     private val _isRtl = MutableStateFlow(false)
     val isRtl: StateFlow<Boolean> = _isRtl.asStateFlow()
 
+    private val _readerMode = MutableStateFlow(ReaderMode.PAGER)
+    val readerMode: StateFlow<ReaderMode> = _readerMode.asStateFlow()
+
+    private val _isImmersive = MutableStateFlow(false)
+    val isImmersive: StateFlow<Boolean> = _isImmersive.asStateFlow()
+
+    private val _isSharpenEnabled = MutableStateFlow(false)
+    val isSharpenEnabled: StateFlow<Boolean> = _isSharpenEnabled.asStateFlow()
+
     fun toggleRtl() { _isRtl.value = !_isRtl.value }
+    fun toggleSharpen() { 
+        _isSharpenEnabled.value = !_isSharpenEnabled.value 
+        (pageLoader as? LocalArchivePageLoader)?.setSharpenEnabled(_isSharpenEnabled.value)
+        (pageLoader as? RemoteStreamPageLoader)?.setSharpenEnabled(_isSharpenEnabled.value)
+    }
+    fun toggleReaderMode() {
+        _readerMode.value = when (_readerMode.value) {
+            ReaderMode.PAGER -> ReaderMode.WEBTOON
+            ReaderMode.WEBTOON -> ReaderMode.DUAL_PAGE
+            ReaderMode.DUAL_PAGE -> ReaderMode.PAGER
+        }
+    }
+    fun setImmersive(immersive: Boolean) { _isImmersive.value = immersive }
 
     private val comicCacheDir = File(application.cacheDir, "comic_cache")
     private val tempFile = File(application.cacheDir, "current_comic.tmp")

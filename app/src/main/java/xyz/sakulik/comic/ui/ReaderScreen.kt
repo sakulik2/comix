@@ -1,49 +1,86 @@
 package xyz.sakulik.comic.ui
 
-import android.net.Uri
+import android.app.Activity
+import android.view.WindowManager
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.launch
 import xyz.sakulik.comic.model.loader.ComicPageLoader
 import xyz.sakulik.comic.ui.components.ComicPageItem
+import xyz.sakulik.comic.ui.components.WebtoonReader
+import xyz.sakulik.comic.viewmodel.ReaderMode
 
 /**
- * 【重工特化】Edge-to-Edge 全面屏与智能预加载交互式面板
+ * 【重工特化 v2.0】Edge-to-Edge 真·全屏沉浸与多维阅读引擎。
  */
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun ReaderScreen(
     loader: ComicPageLoader,
+    readerMode: ReaderMode,
     pageCount: Int,
     comicTitle: String,
     initialPage: Int,
     isRtl: Boolean,
+    isImmersive: Boolean,
     onPageChanged: (Int) -> Unit,
     onBack: () -> Unit,
     onScrapeClick: () -> Unit,
     onToggleRtl: () -> Unit,
+    onToggleSharpen: () -> Unit,
+    onToggleReaderMode: () -> Unit,
+    onToggleImmersive: (Boolean) -> Unit,
+    isSharpenEnabled: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    // 【企业级防毁灭装甲】 使用 Saver 配合 rememberSaveable，在 Android 强行因内存不足杀掉进程、或者发生横竖屏轮转时，死守最后一次页码断点！
+    val context = LocalContext.current
+    val view = LocalView.current
+    val window = (context as? Activity)?.window
+    val coroutineScope = rememberCoroutineScope()
+
+    // 【内存护航】屏幕常亮设置
+    DisposableEffect(Unit) {
+        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    val config = androidx.compose.ui.platform.LocalConfiguration.current
+    val isLandscape = config.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+
+    // 【智能判定】如果处于横屏且当前不是 Webtoon 模式，自动切换到双页逻辑（如果用户没手动改的话）
+    // 为了不干扰用户手动选择，这里仅作逻辑映射建议
+    val effectiveReaderMode = if (isLandscape && readerMode == ReaderMode.PAGER) {
+        ReaderMode.DUAL_PAGE
+    } else {
+        readerMode
+    }
+
+    // 页码断存
     val savedPage = androidx.compose.runtime.saveable.rememberSaveable(
         saver = androidx.compose.runtime.saveable.Saver<androidx.compose.runtime.MutableIntState, Int>(
             save = { it.intValue },
@@ -51,62 +88,120 @@ fun ReaderScreen(
         )
     ) { androidx.compose.runtime.mutableIntStateOf(initialPage) }
 
-    val pagerState = rememberPagerState(
-        initialPage = savedPage.intValue,
-        pageCount = { pageCount }
-    )
-    
-    // 【深度预加载】 将缓存视野扩展至前后各 2 页，实现极速翻页无感加载
-    val beyondViewportPageCount = 2
-
-    LaunchedEffect(pagerState.currentPage) {
-        savedPage.intValue = pagerState.currentPage // 实时更新铁甲存护点
-        onPageChanged(pagerState.currentPage)
+    val pagerPageCount = when (effectiveReaderMode) {
+        ReaderMode.DUAL_PAGE -> (pageCount + 1) / 2
+        else -> pageCount
     }
 
-    // 沉浸态与边缘交互流控中心
-    var isImmersiveMode by remember { mutableStateOf(false) }
-    // 如果为 ture 说明内部 ZoomImage 被拉大了，必须死死锁住 Pager 的左右防线决不让其跟滑！
+    val pagerState = rememberPagerState(
+        initialPage = when (effectiveReaderMode) {
+            ReaderMode.DUAL_PAGE -> savedPage.intValue / 2
+            else -> savedPage.intValue
+        },
+        pageCount = { pagerPageCount }
+    )
+    
+    // 同步 Pager 进度到断存点与外部
+    LaunchedEffect(pagerState.currentPage, effectiveReaderMode) {
+        val targetPage = when (effectiveReaderMode) {
+            ReaderMode.DUAL_PAGE -> (pagerState.currentPage * 2).coerceAtMost(pageCount - 1)
+            else -> pagerState.currentPage
+        }
+        if (savedPage.intValue != targetPage) {
+            savedPage.intValue = targetPage
+            onPageChanged(targetPage)
+        }
+    }
+
+    // 如果为 ture 说明内部 ZoomImage 被拉大了，拦截翻页
     var isUserInteractionBlocked by remember { mutableStateOf(false) }
 
     val layoutDirection = if (isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
-    val coroutineScope = rememberCoroutineScope()
 
     Box(modifier = modifier
         .fillMaxSize()
-        .background(Color.Black)) { // 画布底色深渊黑
+        .background(Color.Black)) { 
         
-        // Pager 翻转引擎源控制
-        CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.fillMaxSize(),
-                // ==================== [核心科技：预加载注入] ==================== //
-                beyondViewportPageCount = beyondViewportPageCount,
-                // ==================== [核心科技：防止连带拖拽] ==================== //
-                userScrollEnabled = !isUserInteractionBlocked 
-            ) { page ->
-                
-                // 子项目剥离方向修正：无论往哪翻，画册原样不能被镜像
-                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                    ComicPageItem(
-                        loader = loader,
-                        pageIndex = page,
-                        // 承接深层组件冒泡上来的放大指令，稍微拉远一点 1.05 就认为是进入看图态
-                        onScaleChanged = { scale -> 
-                            isUserInteractionBlocked = scale > 1.05f 
-                        },
-                        onTap = {
-                            isImmersiveMode = !isImmersiveMode
+        when (readerMode) {
+            ReaderMode.PAGER -> {
+                CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = Modifier.fillMaxSize(),
+                        beyondViewportPageCount = 2,
+                        userScrollEnabled = !isUserInteractionBlocked 
+                    ) { page ->
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            ComicPageItem(
+                                loader = loader,
+                                pageIndex = page,
+                                onScaleChanged = { scale -> 
+                                    isUserInteractionBlocked = scale > 1.05f 
+                                },
+                                onTap = { onToggleImmersive(!isImmersive) }
+                            )
                         }
-                    )
+                    }
                 }
+            }
+            ReaderMode.DUAL_PAGE -> {
+                CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = Modifier.fillMaxSize(),
+                        beyondViewportPageCount = 1,
+                        userScrollEnabled = !isUserInteractionBlocked
+                    ) { page ->
+                        Row(modifier = Modifier.fillMaxSize()) {
+                            val leftIdx = page * 2
+                            val rightIdx = page * 2 + 1
+                            
+                            // RTL 逻辑：物理上的左边应该是逻辑上的后一页，右边是前一页。
+                            // 但 Compose HorizontalPager 已经反转了 Row 的顺序（通过 layoutDirection）。
+                            // 所以这里依然按顺序布局即可，Pager 会替我们排版。
+                            
+                            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                ComicPageItem(
+                                    loader = loader,
+                                    pageIndex = leftIdx,
+                                    onScaleChanged = { isUserInteractionBlocked = it > 1.05f },
+                                    onTap = { onToggleImmersive(!isImmersive) }
+                                )
+                            }
+                            if (rightIdx < pageCount) {
+                                Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                    ComicPageItem(
+                                        loader = loader,
+                                        pageIndex = rightIdx,
+                                        onScaleChanged = { isUserInteractionBlocked = it > 1.05f },
+                                        onTap = { onToggleImmersive(!isImmersive) }
+                                    )
+                                }
+                            } else {
+                                // 最后一页单数补白
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            }
+            ReaderMode.WEBTOON -> {
+                WebtoonReader(
+                    loader = loader,
+                    pageCount = pageCount,
+                    initialPage = savedPage.intValue,
+                    onPageChanged = { page ->
+                        savedPage.intValue = page
+                        onPageChanged(page)
+                    },
+                    onTap = { onToggleImmersive(!isImmersive) }
+                )
             }
         }
         
-        // 沉浸模式 - 顶部幽灵控制台 (带有刮削、方向与返回)
+        // 沉浸模式 - 顶部幽灵控制台
         AnimatedVisibility(
-            visible = !isImmersiveMode,
+            visible = !isImmersive,
             enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
             exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
             modifier = Modifier.align(Alignment.TopCenter)
@@ -115,53 +210,128 @@ fun ReaderScreen(
                 title = { Text(comicTitle, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = MaterialTheme.colorScheme.onSurface)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
                 actions = {
-                    IconButton(onClick = onScrapeClick) {
-                        Icon(Icons.Default.Star, contentDescription = "刮削", tint = MaterialTheme.colorScheme.onSurface)
+                    IconButton(onClick = onToggleSharpen) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome, 
+                            contentDescription = if (isSharpenEnabled) "关闭增强" else "开启增强",
+                            tint = if (isSharpenEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
                     }
-                    Text("RTL", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
+                    IconButton(onClick = onToggleReaderMode) {
+                        Icon(
+                            imageVector = if (readerMode == ReaderMode.PAGER) Icons.Default.VerticalDistribute else Icons.Default.ViewCarousel, 
+                            contentDescription = "切换模式"
+                        )
+                    }
+                    IconButton(onClick = onScrapeClick) {
+                        Icon(Icons.Default.Star, contentDescription = "刮削")
+                    }
+                    Text("RTL", style = MaterialTheme.typography.labelSmall)
                     Switch(
                         checked = isRtl,
                         onCheckedChange = { onToggleRtl() },
-                        modifier = Modifier.padding(horizontal = 8.dp)
+                        modifier = Modifier.scale(0.8f).padding(horizontal = 4.dp)
                     )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f) // 毛玻璃拟态
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.90f)
                 )
             )
         }
 
-        // 沉浸模式 - 底部 Slider 跳转飞行舱
+        // 页面跳转对话框
+        var showJumpDialog by remember { mutableStateOf(false) }
+        var jumpInput by remember { mutableStateOf("") }
+        
+        if (showJumpDialog) {
+            AlertDialog(
+                onDismissRequest = { showJumpDialog = false },
+                title = { Text("跳转到页码") },
+                text = {
+                    OutlinedTextField(
+                        value = jumpInput,
+                        onValueChange = { if (it.all { char -> char.isDigit() }) jumpInput = it },
+                        label = { Text("输入页码 (1 - $pageCount)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                        )
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        val target = jumpInput.toIntOrNull()?.minus(1)
+                        if (target != null && target in 0 until pageCount) {
+                            savedPage.intValue = target
+                            if (readerMode == ReaderMode.PAGER) {
+                                coroutineScope.launch { pagerState.animateScrollToPage(target) }
+                            }
+                            showJumpDialog = false
+                        }
+                    }) { Text("确定") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showJumpDialog = false }) { Text("取消") }
+                }
+            )
+        }
+
+        // 沉浸模式 - 底部悬浮进度控制台 (Slim & Dynamic Design)
         AnimatedVisibility(
-            visible = !isImmersiveMode,
+            visible = !isImmersive,
             enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
             exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-            modifier = Modifier.align(Alignment.BottomCenter)
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(horizontal = 16.dp, vertical = 24.dp) 
         ) {
             Surface(
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-                modifier = Modifier.fillMaxWidth()
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                shape = androidx.compose.foundation.shape.CircleShape, // 圆润长条
+                tonalElevation = 8.dp,
+                shadowElevation = 12.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
+                modifier = Modifier
+                    .fillMaxWidth(0.7f) // 宽度随屏幕自适应，最高 70%
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp), // 极其苗条的垂直间距
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
-                        text = "当前驻留档: ${pagerState.currentPage + 1} / $pageCount 页",
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = "${savedPage.intValue + 1} / $pageCount",
+                        style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                        modifier = Modifier
+                            .clickable { 
+                                jumpInput = (savedPage.intValue + 1).toString()
+                                showJumpDialog = true 
+                            }
+                            .padding(end = 12.dp)
                     )
+                    
                     Slider(
-                        value = pagerState.currentPage.toFloat(),
+                        value = savedPage.intValue.toFloat(),
                         onValueChange = {
-                            coroutineScope.launch {
-                                pagerState.scrollToPage(it.toInt())
+                            savedPage.intValue = it.toInt()
+                        },
+                        onValueChangeFinished = {
+                            if (readerMode == ReaderMode.PAGER) {
+                                coroutineScope.launch { pagerState.animateScrollToPage(savedPage.intValue) }
                             }
                         },
                         valueRange = 0f..(pageCount - 1).coerceAtLeast(1).toFloat(),
-                        steps = (pageCount - 2).coerceAtLeast(0) // 防止步数运算溢出负数挂逼
+                        steps = (pageCount - 2).coerceAtLeast(0),
+                        modifier = Modifier.weight(1f), // 进度条拉长
+                        colors = SliderDefaults.colors(
+                            thumbColor = MaterialTheme.colorScheme.primary,
+                            activeTrackColor = MaterialTheme.colorScheme.primary,
+                            inactiveTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                        )
                     )
                 }
             }

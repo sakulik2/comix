@@ -116,6 +116,7 @@ fun SettingsScreen(
             }
             
             Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.weight(1f))
             Text(
                 "注意：此操作不可逆，将从数据库中移除所有云端漫画记录。",
                 style = MaterialTheme.typography.bodySmall,

@@ -22,8 +22,13 @@ interface ComicPageLoader {
     suspend fun getPageData(pageIndex: Int, width: Int, height: Int): Any?
 
     /**
-     * 生命周期释放钩子：在阅读结束退出页面时调用，
-     * 用于释放本地文件的文件句柄、清理流缓存或取消未完成的请求。
+     * 生命周期释放钩子：当页面被滑出屏幕或回收时由 UI 调用。
+     * 允许加载引擎将显存资源归还池中进行复用。
+     */
+    fun releasePageData(data: Any?)
+
+    /**
+     * 生命周期释放钩子：在阅读结束退出页面时调用。
      */
     fun close()
 }

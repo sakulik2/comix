@@ -99,7 +99,11 @@ class LibraryScanWorker(
                             source = xyz.sakulik.comic.model.db.ComicSource.LOCAL,
                             location = fileUriStr
                         )
-                        comicDao.insert(entity)
+                        val insertedId = comicDao.insert(entity)
+                        // 【自愈触发：入库即刮削】
+                        if (insertedId != -1L) {
+                            xyz.sakulik.comic.model.metadata.MetadataScraper.autoScrape(applicationContext, entity.copy(id = insertedId))
+                        }
                     } else {
                         // [无损抢救] 如果书本早就在库里，只是封面被系统吞了，那么只换封面，绝不干扰辛苦留下的阅读进度！
                         comicDao.update(existing.copy(coverCachePath = newCoverPath))

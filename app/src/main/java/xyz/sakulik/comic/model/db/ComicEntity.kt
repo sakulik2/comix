@@ -36,5 +36,9 @@ data class ComicEntity(
 
     // Hybrid Architecture (Local + Cloud)
     val source: ComicSource = ComicSource.LOCAL,
-    val location: String = "" // 如果 LOCAL，存本地文件绝对路径或 SAF Uri；如果 REMOTE，存服务端的 Comic ID 或基础 URL
+    val location: String = "", // 如果 LOCAL，存本地文件绝对路径或 SAF Uri；如果 REMOTE，存服务端的 Comic ID 或基础 URL
+    
+    // 增量扫描护航 (Phase 3)
+    val lastModified: Long = 0,
+    val fileSize: Long = 0
 )

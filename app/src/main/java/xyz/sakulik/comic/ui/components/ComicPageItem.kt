@@ -37,6 +37,14 @@ fun ComicPageItem(
     // 承载着这一块屏幕真正的渲染能力边界参数
     var containerSize by remember { mutableStateOf(Pair(0, 0)) }
 
+    // 核心显存回收：当这一页面销毁或准备复用时，归还 Bitmap
+    androidx.compose.runtime.DisposableEffect(pageIndex) {
+        onDispose {
+            loader.releasePageData(pageData)
+            pageData = null
+        }
+    }
+
     // 当且仅当这一页面得到了分配给它的物理尺寸边界时，才呼叫深源层引擎释放出匹配的数据流。
     LaunchedEffect(containerSize, pageIndex) {
         if (containerSize.first > 0 && containerSize.second > 0 && pageData == null) {

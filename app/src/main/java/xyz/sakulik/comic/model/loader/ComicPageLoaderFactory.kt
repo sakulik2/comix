@@ -45,10 +45,10 @@ class ComicPageLoaderFactory(private val context: Context) {
             ComicSource.REMOTE -> {
                 val baseUrl = SettingsDataStore.getComicApiBaseUrlFlow(context).firstOrNull() ?: "https://comix.sakulik.xyz/"
                 RemoteStreamPageLoader(
-                    comicId = comic.location, // 如果是云端，location 存的是漫画的 Slugs/ID (例如 lailastarr)
+                    context = context,
+                    comicId = comic.location,
                     totalPages = comic.totalPages,
-                    baseUrl = baseUrl,
-                    apiService = getApiService()
+                    baseUrl = baseUrl
                 )
             }
         }
