@@ -17,16 +17,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.launch
 import xyz.sakulik.comic.model.loader.ComicPageLoader
 import xyz.sakulik.comic.ui.components.ComicPageItem
@@ -53,11 +48,10 @@ fun ReaderScreen(
     onToggleSharpen: () -> Unit,
     onToggleReaderMode: () -> Unit,
     onToggleImmersive: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
     isSharpenEnabled: Boolean = false,
-    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val view = LocalView.current
     val window = (context as? Activity)?.window
     val coroutineScope = rememberCoroutineScope()
 
@@ -82,11 +76,11 @@ fun ReaderScreen(
 
     // 页码断存
     val savedPage = androidx.compose.runtime.saveable.rememberSaveable(
-        saver = androidx.compose.runtime.saveable.Saver<androidx.compose.runtime.MutableIntState, Int>(
+        saver = androidx.compose.runtime.saveable.Saver(
             save = { it.intValue },
-            restore = { androidx.compose.runtime.mutableIntStateOf(it) }
+            restore = { mutableIntStateOf(it) }
         )
-    ) { androidx.compose.runtime.mutableIntStateOf(initialPage) }
+    ) { mutableIntStateOf(initialPage) }
 
     val pagerPageCount = when (effectiveReaderMode) {
         ReaderMode.DUAL_PAGE -> (pageCount + 1) / 2
@@ -299,7 +293,7 @@ fun ReaderScreen(
                     .fillMaxWidth(0.7f) // 宽度随屏幕自适应，最高 70%
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp), // 极其苗条的垂直间距
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(

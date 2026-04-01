@@ -35,9 +35,15 @@ android {
         compose = true
         buildConfig = true
     }
+
+    packaging {
+        jniLibs {
+            // 解决 androidx.graphics.path.so 无法 strip 的警告
+            keepDebugSymbols.add("**/libandroidx.graphics.path.so")
+        }
+    }
 }
 
-// ==================== [核心科技：手势绕过 DSL 访问器限制] ==================== //
 // 直接遍历所有 Kotlin 编译任务，强制注入 JVM 目标。
 // 这样即使 android { ... } 闭包不识别 kotlinOptions，这里也能生效。
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
