@@ -257,7 +257,7 @@ class BookshelfViewModel(
             .addTag("SCAN_LIBRARY_WORK")
             .build()
         WorkManager.getInstance(getApplication()).enqueueUniqueWork(
-            "LibraryScan_Single", ExistingWorkPolicy.KEEP, workRequest
+            "LibraryScan_Single", ExistingWorkPolicy.REPLACE, workRequest
         )
     }
 

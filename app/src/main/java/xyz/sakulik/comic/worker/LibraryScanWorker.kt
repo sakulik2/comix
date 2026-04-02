@@ -113,16 +113,22 @@ class LibraryScanWorker(
         }
 
         // 阶段二：废墟自动清理（严格镜像剔除）
+        // [极重要修复]：如果是局部扫描（uriString != null），则只清理该目录下的死链，不可动全局！
         setProgress(workDataOf(PROGRESS_MSG to "正在比对数据，清理物理剥离项..."))
         val allDbComics = comicDao.getAllComicsUnordered()
         var deletedCount = 0
 
         for (comic in allDbComics) {
-            // [安全判定]：如果漫画的 URI 不属于本次全量扫描探测到的活体 URI，
-            // 并且我们物理检查它确实不存在，则证明它被外部工具移除了。无情销毁！
-            if (!aliveUriStrings.contains(comic.uri)) {
-                // 退路检查：也许是在一个我们没有扫描权限的孤儿路径？
-                // 如果是用户全扫，并且文件确实不存在，就杀。
+            // 如果是指定的单目录扫描，先判定该漫画是否位于该目录下
+            val isWithinCurrentScanScope = if (uriString != null) {
+                comic.uri.startsWith(uriString)
+            } else {
+                // 如果是全量扫描，作用域覆盖所有历史授权目录
+                targetUris.any { comic.uri.startsWith(it.toString()) }
+            }
+
+            if (isWithinCurrentScanScope && !aliveUriStrings.contains(comic.uri)) {
+                // 仅对在扫描范围内但未探测到活体的记录进行物理验证
                 val doc = DocumentFile.fromSingleUri(applicationContext, Uri.parse(comic.uri))
                 if (doc == null || !doc.exists()) {
                     // 同时删除无用的本地封面残躯

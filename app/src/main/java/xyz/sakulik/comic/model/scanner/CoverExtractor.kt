@@ -55,40 +55,27 @@ object CoverExtractor {
     }
 
     private fun extractCbzCover(context: Context, uri: Uri, outPath: File): Boolean {
-        // [1] 找出字典序最靠前的图片文件名
-        var bestName: String? = null
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            val zis = ZipInputStream(input)
-            var entry = zis.nextEntry
-            while (entry != null) {
-                if (!entry.isDirectory && isImage(entry.name)) {
-                    if (bestName == null || entry.name.lowercase() < bestName!!.lowercase()) {
-                        bestName = entry.name
+        // [性能优化] 改为单次流式扫描：直接提取遇到的第一个合规图片文件。
+        // 对于 CBZ 来说，通常封面就是第一个文件，无需两次遍历。
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                val zis = ZipInputStream(input)
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    if (!entry.isDirectory && isImage(entry.name)) {
+                        val bitmap = decodeStreamWithThreshold(context, zis)
+                        if (bitmap != null) {
+                            saveBitmapToWebp(bitmap, outPath)
+                            bitmap.recycle()
+                            return true
+                        }
                     }
+                    zis.closeEntry()
+                    entry = zis.nextEntry
                 }
-                zis.closeEntry()
-                entry = zis.nextEntry
             }
-        } ?: return false
-
-        if (bestName == null) return false
-
-        // [2] 提取该图片数据
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            val zis = ZipInputStream(input)
-            var entry = zis.nextEntry
-            while (entry != null) {
-                if (entry.name == bestName) {
-                    val bitmap = decodeStreamWithThreshold(context, zis)
-                    if (bitmap != null) {
-                        saveBitmapToWebp(bitmap, outPath)
-                        bitmap.recycle()
-                        return true
-                    }
-                }
-                zis.closeEntry()
-                entry = zis.nextEntry
-            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
         return false
     }

@@ -43,6 +43,11 @@
 # --- SLF4J (修复 R8 Missing class 错误) ---
 -dontwarn org.slf4j.**
 
+# --- WorkManager (修复反射实例化失败) ---
+-keep class androidx.work.OverwritingInputMerger { *; }
+-keep class androidx.work.ArrayCreatingInputMerger { *; }
+-keep class androidx.work.multiprocess.** { *; }
+
 # --- Kotlin 协程 ---
 -keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
 -keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
