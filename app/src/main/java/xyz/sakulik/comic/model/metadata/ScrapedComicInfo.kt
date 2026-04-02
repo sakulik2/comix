@@ -23,5 +23,9 @@ data class ScrapedComicInfo(
     val rating: Float?,               // 本平台评分 (0.0 到 10.0)
     val source: ScrapeSource,         // 数据来源于哪个子系统
     val region: ComicRegion,          // 极其重要的阵营划分
-    val format: xyz.sakulik.comic.model.db.ComicFormat = xyz.sakulik.comic.model.db.ComicFormat.UNKNOWN // 发行格式推知（默认为前线离线推测的兜底）
+    val format: xyz.sakulik.comic.model.db.ComicFormat = xyz.sakulik.comic.model.db.ComicFormat.UNKNOWN, // 发行格式推知（默认为前线离线推测的兜底）
+    val remoteId: String? = null,     // 远程数据库中的 ID (用于系列追踪)
+    val issueTitle: String? = null,   // 具体的期号标题 (如: The Night Gwen Stacy Died)
+    val issueNumber: Float? = null,  // 远程数据库中的独立期号
+    val year: String? = null          // 发行年份 (如: 2012)
 )

@@ -102,14 +102,13 @@ class LocalArchivePageLoader(
                 val tempFile = File(sessionDir, "mirror_${System.currentTimeMillis()}.tmp")
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     FileOutputStream(tempFile).use { out ->
-                        // 【优化 1：大 Buffer 并发拷贝】
+                        // 【优化 1：大 Buffer 高速拷贝】
                         // 提高从 content:// 读取的吞吐量
-                        val buffer = ByteArray(65536) // 64KB
+                        val buffer = ByteArray(131072) // 128KB
                         var bytes = input.read(buffer)
                         while (bytes >= 0) {
                             out.write(buffer, 0, bytes)
                             bytes = input.read(buffer)
-                            yield() // 让出 CPU，保证首屏 UI 不被磁盘 IO 锁死
                         }
                     }
                 }
@@ -244,23 +243,93 @@ class LocalArchivePageLoader(
         null
     }
 
+    /**
+     * 【极致化混合渲染 v5.0】
+     * 针对性能瓶颈进行的致命打击：
+     * 1. 对于 < 15MB 的图片（99% 的漫画页），直接在内存中 `readBytes` 并解码，速度极快。
+     * 2. 只有当图片极大时，才降级使用临时文件防止 OOM。
+     */
     private fun decodeImageStream(input: java.io.InputStream, reqWidth: Int, reqHeight: Int): Bitmap? {
-        // 先缓存字节流以支持两次采样解码
-        val bytes = input.readBytes() 
-        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+        val MAX_MEMORY_IMG_SIZE = 15 * 1024 * 1024 // 15MB 阈值
         
-        val sampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
-        options.inSampleSize = sampleSize
-        options.inJustDecodeBounds = false
-        options.inPreferredConfig = Bitmap.Config.RGB_565
-        
-        val targetW = options.outWidth / sampleSize
-        val targetH = options.outHeight / sampleSize
-        
+        try {
+            // 我们不能直接调用 input.available()，因为它在流式压缩包下通常不准确。
+            // 采用 ByteArrayOutputStream 捕获最多 MAX_MEMORY_IMG_SIZE 字节。
+            val baos = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(16384)
+            var totalRead = 0
+            var exceeded = false
+            
+            while (true) {
+                val read = input.read(buffer)
+                if (read == -1) break
+                totalRead += read
+                if (totalRead > MAX_MEMORY_IMG_SIZE) {
+                    exceeded = true
+                    break
+                }
+                baos.write(buffer, 0, read)
+            }
+
+            if (!exceeded) {
+                // 情况 A：轻快路径 —— 内存直达
+                val bytes = baos.toByteArray()
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                
+                val sampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
+                options.inSampleSize = sampleSize
+                options.inJustDecodeBounds = false
+                options.inPreferredConfig = Bitmap.Config.RGB_565
+                options.inMutable = true
+
+                // 应用 Bitmap 复用
+                val targetW = options.outWidth / sampleSize
+                val targetH = options.outHeight / sampleSize
+                applyBitmapReuse(options, targetW, targetH)
+
+                val bitmap = try {
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                } catch (e: Exception) {
+                    options.inBitmap = null
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                }
+                return if (isSharpenEnabled && bitmap != null) sharpenBitmap(bitmap) else bitmap
+            } else {
+                // 情况 B：兜底路径 —— 磁盘降级 (处理极端高清巨图)
+                val tempFile = File(context.cacheDir, "loader_fallback_${java.util.UUID.randomUUID()}.tmp")
+                try {
+                    FileOutputStream(tempFile).use { out ->
+                        baos.writeTo(out) // 先把已经读出来的部分写进去
+                        input.copyTo(out) // 再把剩下的流拷完
+                    }
+                    val options = BitmapFactory.Options().apply { 
+                        inJustDecodeBounds = true 
+                        inPreferredConfig = Bitmap.Config.RGB_565
+                    }
+                    BitmapFactory.decodeFile(tempFile.absolutePath, options)
+                    val sampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
+                    options.inSampleSize = sampleSize
+                    options.inJustDecodeBounds = false
+                    options.inMutable = true
+                    applyBitmapReuse(options, options.outWidth / sampleSize, options.outHeight / sampleSize)
+
+                    val bitmap = BitmapFactory.decodeFile(tempFile.absolutePath, options)
+                    return if (isSharpenEnabled && bitmap != null) sharpenBitmap(bitmap) else bitmap
+                } finally {
+                    if (tempFile.exists()) tempFile.delete()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return null
+        }
+    }
+
+    private fun applyBitmapReuse(options: BitmapFactory.Options, targetW: Int, targetH: Int) {
+        val requiredBytes = targetW * targetH * (if (options.inPreferredConfig == Bitmap.Config.RGB_565) 2 else 4)
         synchronized(bitmapPool) {
             val it = bitmapPool.iterator()
-            val requiredBytes = targetW * targetH * 2
             while (it.hasNext()) {
                 val b = it.next()
                 if (!b.isRecycled && b.isMutable && b.allocationByteCount >= requiredBytes) {
@@ -270,15 +339,6 @@ class LocalArchivePageLoader(
                 }
             }
         }
-        options.inMutable = true
-        val bitmap = try {
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-        } catch (e: Exception) {
-            options.inBitmap = null
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-        }
-        
-        return if (isSharpenEnabled && bitmap != null) sharpenBitmap(bitmap) else bitmap
     }
 
     /**

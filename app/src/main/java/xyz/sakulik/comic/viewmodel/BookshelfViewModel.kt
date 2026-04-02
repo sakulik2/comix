@@ -42,14 +42,22 @@ enum class SortOrder(val displayName: String) {
 // ==== 数据组合体，代表合并后在 UI 中的堆叠文件夹 ====
 data class SeriesGroupData(
     val seriesName: String,
-    val coverComic: ComicEntity, // 用其中一本来代表堆叠外放封皮
-    val bookCount: Int,          // 此文件夹里的子书籍数量
-    val books: List<ComicEntity> // 内含的所有完整分卷表单
+    val coverComic: ComicEntity, 
+    val bookCount: Int,          
+    val books: List<ComicEntity>, 
+    val disambiguation: String? = null,
+    val displayTitle: String = seriesName,
+    val displayBadge: String? = disambiguation
 )
 
 // ==== 书架网格呈现基础元素，允许单一实体，也允许聚合体并排存在 ====
 sealed class BookshelfItem {
-    data class SingleComic(val comic: ComicEntity) : BookshelfItem()
+    data class SingleComic(
+        val comic: ComicEntity, 
+        val disambiguation: String? = null,
+        val displayTitle: String = "",
+        val displayBadge: String? = null
+    ) : BookshelfItem()
     data class SeriesGroup(val group: SeriesGroupData) : BookshelfItem()
 }
 
@@ -81,6 +89,10 @@ class BookshelfViewModel(
     val remoteEnabled = SettingsDataStore.getRemoteEnabledFlow(application)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
+    // 元数据启用状态开关
+    val metadataEnabled = SettingsDataStore.getMetadataEnabledFlow(application)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
     // ======= 核心重构：打通 WorkManager 返回的数据管道 =======
     val scanProgress: StateFlow<String?> = WorkManager.getInstance(application)
         .getWorkInfosByTagFlow("SCAN_LIBRARY_WORK")
@@ -98,19 +110,26 @@ class BookshelfViewModel(
 
     /**
      * 【大核心折叠中枢流出节点】 
-     * 运用 combine 并发结合数据库与4合1交互态参数，通过 groupBy 彻底瓦解原来的单线性书籍展馆，制造坍缩折叠堆堆叠结构。
+     * 运用 combine 并发结合数据库与多种交互参数。
+     * 为了避免超过 5 个参数导致类型推断失败，我们将过滤器参数先行聚合。
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     val groupedItems: StateFlow<List<BookshelfItem>> = combine(
+        combine(
+            _selectedRegionFilter,
+            _selectedFormatFilter,
+            remoteEnabled,
+            metadataEnabled
+        ) { region, format, remote, metadata ->
+            Quadruple(region, format, remote, metadata)
+        },
         _sortOrder,
-        _searchQuery,
-        _selectedRegionFilter,
-        _selectedFormatFilter,
-        remoteEnabled
-    ) { order, query, regionFilter, formatFilter, remoteEnabled ->
-        Quadruple(Pair(order, query), regionFilter, formatFilter, remoteEnabled)
-    }.flatMapLatest { (orderQuery, regionFilter, formatFilter, remoteEnabled) ->
-        val (order, query) = orderQuery
+        _searchQuery
+    ) { filters, order, query ->
+        Triple(filters, order, query)
+    }.flatMapLatest { (filters, order, query) ->
+        val (regionFilter, formatFilter, remoteEnabled, metadataEnabled) = filters
+        
         // 发掘底层原始列表
         val sourceFlow = if (query.isNotBlank()) {
             dao.searchComics(query)
@@ -122,7 +141,7 @@ class BookshelfViewModel(
             }
         }
 
-        souceRefine(sourceFlow, regionFilter, formatFilter, remoteEnabled)
+        souceRefine(sourceFlow, regionFilter, formatFilter, remoteEnabled, metadataEnabled)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -130,54 +149,89 @@ class BookshelfViewModel(
     )
     
     // 私有提炼流水线装配工段
-    private fun souceRefine(sourceFlow: Flow<List<ComicEntity>>, regionFilter: ComicRegion?, formatFilter: ComicFormat?, remoteEnabled: Boolean): Flow<List<BookshelfItem>> {
+    private fun souceRefine(sourceFlow: Flow<List<ComicEntity>>, regionFilter: ComicRegion?, formatFilter: ComicFormat?, remoteEnabled: Boolean, metadataEnabled: Boolean): Flow<List<BookshelfItem>> {
+        val formatsToStrip = listOf("HC - ", "SC - ", "TPB - ", "OHC - ", "Absolute ")
+        val uselessKeywords = setOf("hc", "sc", "tpb", "gn", "ohc")
+
         return sourceFlow.map { rawList ->
-            // 第一闸刀：切除掉多维选项不匹配的书籍
+            // 1. 处理过滤
             var filteredList = rawList
-            
-            // 是否根据全局开关隐藏云端书籍
-            if (!remoteEnabled) {
-                filteredList = filteredList.filter { it.source != ComicSource.REMOTE }
-            }
+            if (!remoteEnabled) filteredList = filteredList.filter { it.source != ComicSource.REMOTE }
+            if (regionFilter != null) filteredList = filteredList.filter { it.region == regionFilter }
+            if (formatFilter != null) filteredList = filteredList.filter { it.format == formatFilter }
 
-            if (regionFilter != null) {
-                // 精准打击：不再接受 UNKNOWN 混入已定义的分类标签
-                filteredList = filteredList.filter { it.region == regionFilter }
-            }
-            if (formatFilter != null) {
-                filteredList = filteredList.filter { it.format == formatFilter }
-            }
-
-            val displayItems = mutableListOf<BookshelfItem>()
-            
-            // 第二屠龙刀：聚合同类项，折叠为卷集
-            val groupedMap = filteredList.groupBy { it.seriesName }
-
-            for ((seriesName, booksInSeries) in groupedMap) {
-                if (seriesName.isBlank() || booksInSeries.size == 1) {
-                    // 没有有效系列名，或者这套书仅仅收录了一本，那么没必要文件夹化，直接平铺开去
-                    booksInSeries.forEach { displayItems.add(BookshelfItem.SingleComic(it)) }
-                } else {
-                    // 检测到有多本归属于同系列的残卷，在此强行折叠坍缩，构造文件夹虚拟实体 (SeriesGroup)
-                    // 首先我们要把内部进行正确时序理顺（按卷号或者按期数号），这是为了让文件夹拿第一卷作为封面
-                    val ascendingBooks = booksInSeries.sortedWith(
-                        compareBy({ it.volumeNumber ?: 9999f }, { it.issueNumber ?: 9999f })
-                    )
-                    
-                    displayItems.add(
-                        BookshelfItem.SeriesGroup(
-                            SeriesGroupData(
-                                seriesName = seriesName,
-                                coverComic = ascendingBooks.first(),
-                                bookCount = booksInSeries.size,
-                                books = ascendingBooks
-                            )
-                        )
-                    )
+            if (!metadataEnabled) {
+                // 【核心路径】 如果关闭元数据，则直接平铺显示，使用原始 title
+                return@map filteredList.map { 
+                    BookshelfItem.SingleComic(it, null, it.title, null) 
                 }
             }
-            displayItems
-        }
+
+            // 2. 初步按系列聚合
+            val tempGroups = mutableListOf<BookshelfItem>()
+            val groupedMap = filteredList.groupBy { "${it.seriesName}|${it.format}|${it.year}|${it.remoteSeriesId}" }
+
+            for ((_, booksInSeries) in groupedMap) {
+                val firstBook = booksInSeries.first()
+                val seriesName = firstBook.seriesName
+                if (seriesName.isBlank() || booksInSeries.size == 1) {
+                    booksInSeries.forEach { tempGroups.add(BookshelfItem.SingleComic(it)) }
+                } else {
+                    val ascendingBooks = booksInSeries.sortedWith(compareBy({ it.volumeNumber ?: 9999f }, { it.issueNumber ?: 9999f }))
+                    tempGroups.add(BookshelfItem.SeriesGroup(SeriesGroupData(seriesName, ascendingBooks.first(), booksInSeries.size, ascendingBooks)))
+                }
+            }
+
+            // 3. 统计名称重名，以便后续进行 Disambiguation 处理
+            val nameCountMap = tempGroups.groupBy { 
+                when(it) {
+                    is BookshelfItem.SingleComic -> it.comic.seriesName
+                    is BookshelfItem.SeriesGroup -> it.group.seriesName
+                }
+            }.mapValues { it.value.size }
+
+            // 4. 重构结果并【预计算】所有 UI 展示所需标题与角标
+            tempGroups.map { item ->
+                when (item) {
+                    is BookshelfItem.SingleComic -> {
+                        val comic = item.comic
+                        val sName = comic.seriesName
+                        val rawITitle = comic.issueTitle ?: comic.title
+                        
+                        // 1. 清洗标题前缀
+                        var cleanedITitle = rawITitle
+                        formatsToStrip.forEach { if (cleanedITitle.startsWith(it, true)) cleanedITitle = cleanedITitle.substring(it.length).trim() }
+                        
+                        // 2. 计算冲突辨识 (Disambiguation)
+                        val disambiguation = if (!sName.isNullOrBlank() && (nameCountMap[sName] ?: 0) > 1) {
+                            listOfNotNull(comic.year, comic.format.name.takeIf { it != "UNKNOWN" }).joinToString(", ")
+                        } else null
+
+                        // 3. 决定最终展示标题 (处理 Batman: Hush 这种系列名与标题重复的情况)
+                        val displayTitle = if (!sName.isNullOrBlank()) {
+                            val sNorm = sName.lowercase().filter { it.isLetterOrDigit() }
+                            val iNorm = cleanedITitle.lowercase().filter { it.isLetterOrDigit() }
+                            val isUseless = uselessKeywords.contains(cleanedITitle.lowercase().trim())
+                            
+                            if (!isUseless && sNorm != iNorm && !iNorm.contains(sNorm) && !sNorm.contains(iNorm)) {
+                                "$sName - $cleanedITitle"
+                            } else if (isUseless) sName else cleanedITitle
+                        } else cleanedITitle
+
+                        item.copy(disambiguation = disambiguation, displayTitle = displayTitle, displayBadge = disambiguation)
+                    }
+                    is BookshelfItem.SeriesGroup -> {
+                        val group = item.group
+                        val sName = group.seriesName
+                        val disambiguation = if ((nameCountMap[sName] ?: 0) > 1) {
+                            listOfNotNull(group.coverComic.year, group.coverComic.format.name.takeIf { it != "UNKNOWN" }).joinToString(", ")
+                        } else null
+                        
+                        BookshelfItem.SeriesGroup(group.copy(disambiguation = disambiguation, displayBadge = disambiguation))
+                    }
+                }
+            }
+        }.flowOn(Dispatchers.Default) // [核心优化] 强制在计算线程执行，守护 UI 60 帧
     }
 
     fun onSortOrderChanged(order: SortOrder) { _sortOrder.value = order }
@@ -227,70 +281,12 @@ class BookshelfViewModel(
     fun autoScrape(comic: ComicEntity) {
         viewModelScope.launch {
             _autoScrapeState.value = AutoScrapeState.Loading(comic.id)
-
-            val repository = MetadataRepository(getApplication())
-            val keyword = FilenameCleaner.clean(comic.title)
-            val results = try {
-                repository.searchComic(keyword, ScrapeStrategy.SMART_FALLBACK)
+            try {
+                xyz.sakulik.comic.model.metadata.MetadataScraper.autoScrape(getApplication(), comic)
+                _autoScrapeState.value = AutoScrapeState.Done(comic.id)
             } catch (e: Exception) {
-                _autoScrapeState.value = AutoScrapeState.Error(comic.id, "网络异常: ${e.localizedMessage}")
-                return@launch
+                _autoScrapeState.value = AutoScrapeState.Error(comic.id, e.localizedMessage ?: "未知错误")
             }
-
-            val best = results.firstOrNull()
-            if (best == null) {
-                _autoScrapeState.value = AutoScrapeState.Error(comic.id, "未搜索到相关内容")
-                return@launch
-            }
-
-            withContext(Dispatchers.IO) {
-                var finalCoverPath = comic.coverCachePath
-                best.coverUrl?.let { url ->
-                    try {
-                        // [网络层防护] ComicVine / Bangumi 往往拦截默认空 User-Agent 的裸请求
-                        val request = Request.Builder()
-                            .url(url)
-                            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                            .build()
-                        sharedOkHttpClient.newCall(request).execute().use { response ->
-                            val bytes = response.body?.bytes()
-                            if (bytes != null && response.isSuccessful) {
-                                // [格式与毁损防护] 经过原生 BitmapFactory 解构压缩，彻底杜绝服务器传回 JPG 却被盲目盖上 .webp 后缀导致 Coil 框架解析雪崩的隐患。
-                                val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                                if (bitmap != null) {
-                                    val file = File(getApplication<Application>().filesDir, "covers/${UUID.randomUUID()}.webp")
-                                    file.parentFile?.mkdirs()
-                                    java.io.FileOutputStream(file).use { out ->
-                                        @Suppress("DEPRECATION")
-                                        bitmap.compress(android.graphics.Bitmap.CompressFormat.WEBP, 85, out)
-                                    }
-                                    bitmap.recycle()
-                                    finalCoverPath = file.absolutePath
-                                }
-                            }
-                        }
-                    } catch (e: Exception) { e.printStackTrace() }
-                }
-
-                val updated = comic.copy(
-                    title = best.title + buildString {
-                        if (comic.volumeNumber != null) append(" Vol.${comic.volumeNumber}")
-                        if (comic.issueNumber != null) append(" #${comic.issueNumber}")
-                    },
-                    coverCachePath = finalCoverPath,
-                    seriesName = best.title,
-                    region = best.region,
-                    format = if (best.format != ComicFormat.UNKNOWN) best.format else comic.format,
-                    authors = best.authors.joinToString(", ").takeIf { it.isNotEmpty() } ?: comic.authors,
-                    summary = best.summary ?: comic.summary,
-                    genres = best.genres.joinToString(", ").takeIf { it.isNotEmpty() } ?: comic.genres,
-                    publisher = best.publisher ?: comic.publisher,
-                    rating = best.rating ?: comic.rating
-                )
-                dao.update(updated)
-            }
-
-            _autoScrapeState.value = AutoScrapeState.Done(comic.id)
         }
     }
 
@@ -387,9 +383,18 @@ class BookshelfViewModel(
         }
     }
 
+    fun getSeriesByName(name: String): Flow<SeriesGroupData?> {
+        return groupedItems.map { items ->
+            items.filterIsInstance<BookshelfItem.SeriesGroup>()
+                .find { it.group.seriesName == name }
+                ?.group
+        }
+    }
+
     /**
      * 【清场机制】 允许用户一键销毁所有云端索引，还一个纯净的本地库。
      */
+
     fun clearRemoteLibrary() {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {

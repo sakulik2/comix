@@ -2,7 +2,11 @@ package xyz.sakulik.comic
 
 import android.app.Application
 import xyz.sakulik.comic.model.db.AppDatabase
-
+import xyz.sakulik.comic.model.preferences.SettingsDataStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import java.io.File
 
 /**
@@ -16,19 +20,22 @@ class ComicApplication : Application() {
         // 显式触发 Room 数据库的初始化动作
         AppDatabase.getDatabase(this)
 
-        // 每次重启 App 时清理任何非物理崩溃导致的缓存残留
-        try {
-            // 清理所有 reader_ 开头的缓存文件、scanner_buffer 以及其他历史 .cbr/.tmp 残留
-            cacheDir.listFiles { _, name -> 
-                name.startsWith("reader_") || 
-                name.startsWith("scanner_") || 
-                name.endsWith(".cbr") || 
-                name.endsWith(".tmp") 
-            }?.forEach { 
-                it.delete() 
+        // [存储瘦身自愈] 每次重启 App 时全量清理运行期临时解压产生的图片缓存
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                // 1. 深度清理全量 cache 目录（解决 Reader/Scanner 子文件夹堆积）
+                cacheDir.listFiles()?.forEach { it.deleteRecursively() }
+
+                // 2. 根据用户设置，激进清理持久化封面目录
+                SettingsDataStore.getAutoClearCoversFlow(this@ComicApplication).first().let { enabled ->
+                    if (enabled) {
+                        val coverDir = File(filesDir, "covers")
+                        if (coverDir.exists()) coverDir.deleteRecursively()
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
         }
     }
 }

@@ -46,6 +46,12 @@ interface ComicDao {
     @Query("UPDATE comic_books SET currentPage = :page, totalPages = :total, lastReadTime = :time WHERE id = :id")
     suspend fun updateProgress(id: Long, page: Int, total: Int, time: Long): Int
 
+    @Query("UPDATE comic_books SET authors = :authors, summary = :summary, genres = :genres, publisher = :publisher, region = :region, remoteSeriesId = :remoteId, year = :year WHERE seriesName = :seriesName")
+    suspend fun updateSeriesMetadata(seriesName: String, authors: String?, summary: String?, genres: String?, publisher: String?, region: ComicRegion, remoteId: String?, year: String?): Int
+
+    @Query("SELECT * FROM comic_books WHERE seriesName = :seriesName")
+    suspend fun getComicsBySeriesName(seriesName: String): List<ComicEntity>
+
     @Query("DELETE FROM comic_books WHERE source = :source")
     suspend fun deleteComicsBySource(source: ComicSource): Int
 }

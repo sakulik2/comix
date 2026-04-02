@@ -54,6 +54,7 @@ class LibraryScanner(private val context: Context) {
                         var format = parsedNameInfo.format
                         var issueNum = parsedNameInfo.issueNumber
                         var volNum = parsedNameInfo.volumeNumber
+                        var year = parsedNameInfo.year
 
                         var authors: String? = null
                         var summary: String? = null
@@ -90,6 +91,7 @@ class LibraryScanner(private val context: Context) {
                             format = format,
                             issueNumber = issueNum,
                             volumeNumber = volNum,
+                            year = year,
                             authors = authors,
                             summary = summary,
                             genres = genres,

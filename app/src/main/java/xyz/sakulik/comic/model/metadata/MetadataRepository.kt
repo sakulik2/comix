@@ -32,7 +32,7 @@ class MetadataRepository(private val context: Context) {
         suspend fun fetchVine() {
             try {
                 // 如果用户不填 Token 这里也会照常抓取，只不过极大概率被后台返回空或者未授权
-                val vineResponse = comicVineService.searchVolumes(query = keyword)
+                val vineResponse = comicVineService.searchMetadata(query = keyword)
                 vineResponse.results?.forEach { results.add(it.toDomainModel()) }
             } catch (e: Exception) { 
                 e.printStackTrace()
@@ -61,5 +61,36 @@ class MetadataRepository(private val context: Context) {
         }
         
         return@withContext results
+    }
+
+    /**
+     * 【分层打击】 针对特定 Volume 下的特定 Issue 进行精准元数据抓取
+     * @param volumeId ComicVine 的 Volume ID
+     * @param issueNumber 期号
+     */
+    suspend fun searchIssue(volumeId: String, issueNumber: Float): ScrapedComicInfo? = withContext(Dispatchers.IO) {
+        try {
+            // 过滤条件格式: volume:ID,issue_number:NUM
+            // 注意：issue_number 在 ComicVine API 中通常是字符串，但 filter 支持数字匹配
+            val numInt = if (issueNumber % 1f == 0f) issueNumber.toInt().toString() else issueNumber.toString()
+            val response = comicVineService.getIssues(filter = "volume:$volumeId,issue_number:$numInt")
+            return@withContext response.results?.firstOrNull()?.toDomainModel()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    /**
+     * 【下钻打击】 拉取指定系列下的全部分期（用于手动精准匹配）
+     */
+    suspend fun getIssuesByVolumeId(volumeId: String): List<ScrapedComicInfo> = withContext(Dispatchers.IO) {
+        try {
+            val response = comicVineService.getIssues(filter = "volume:$volumeId")
+            return@withContext response.results?.map { it.toDomainModel() } ?: emptyList()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
     }
 }

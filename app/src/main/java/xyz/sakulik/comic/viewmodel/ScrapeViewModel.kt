@@ -19,6 +19,10 @@ import xyz.sakulik.comic.model.network.RetrofitClient
 import java.io.File
 import java.util.UUID
 
+enum class ScrapeStep {
+    VOLUME, ISSUE
+}
+
 class ScrapeViewModel(
     application: Application,
     private val dao: ComicDao
@@ -38,6 +42,13 @@ class ScrapeViewModel(
     private val _selectedStrategy = MutableStateFlow(ScrapeStrategy.SMART_FALLBACK)
     val selectedStrategy = _selectedStrategy.asStateFlow()
 
+    // [核心重构] 多步状态管理
+    private val _currentStep = MutableStateFlow(ScrapeStep.VOLUME)
+    val currentStep = _currentStep.asStateFlow()
+
+    private val _selectedVolume = MutableStateFlow<ScrapedComicInfo?>(null)
+    val selectedVolume = _selectedVolume.asStateFlow()
+
     // 暂存正主实体，以便选择后能够将其归档同步到数据库
     private var targetComic: ComicEntity? = null
 
@@ -53,6 +64,8 @@ class ScrapeViewModel(
         _searchQuery.value = FilenameCleaner.clean(comic.title)
         _searchResults.value = emptyList()
         _isSearching.value = false
+        _currentStep.value = ScrapeStep.VOLUME
+        _selectedVolume.value = null
         _selectedStrategy.value = ScrapeStrategy.SMART_FALLBACK
         // 加载后立即自动触发一次初扫，提升体验
         search()
@@ -73,10 +86,34 @@ class ScrapeViewModel(
         viewModelScope.launch {
             _isSearching.value = true
             _searchResults.value = emptyList()
+            _currentStep.value = ScrapeStep.VOLUME
+            _selectedVolume.value = null
+            // 搜索 API 本身可能混杂 Volume 和 Issue，但我们第一步将其视为系列的初步筛选
             val results = repository.searchComic(query, _selectedStrategy.value)
             _searchResults.value = results
             _isSearching.value = false
         }
+    }
+
+    /**
+     * [下钻行动] 选择了系列后，立刻拉取该系列下的全部分期
+     */
+    fun selectVolume(volume: ScrapedComicInfo) {
+        val volumeId = volume.remoteId ?: return
+        viewModelScope.launch {
+            _isSearching.value = true
+            _selectedVolume.value = volume
+            _currentStep.value = ScrapeStep.ISSUE
+            val issues = repository.getIssuesByVolumeId(volumeId)
+            _searchResults.value = issues
+            _isSearching.value = false
+        }
+    }
+
+    fun goBackToVolumeSearch() {
+        _currentStep.value = ScrapeStep.VOLUME
+        _selectedVolume.value = null
+        search() // 重新刷新搜索列表
     }
 
     /**
@@ -92,6 +129,8 @@ class ScrapeViewModel(
 
     fun applyMetadataBySelection(info: ScrapedComicInfo, onComplete: () -> Unit) {
         val comic = targetComic ?: return
+        val currentVol = _selectedVolume.value
+        
         viewModelScope.launch(Dispatchers.IO) {
             var finalCoverPath = comic.coverCachePath
 
@@ -102,7 +141,7 @@ class ScrapeViewModel(
                     okHttpClient.newCall(request).execute().use { response ->
                         val bytes = response.body?.bytes()
                         if (bytes != null && response.isSuccessful) {
-                            val file = File(getApplication<Application>().cacheDir, "covers/${UUID.randomUUID()}.webp")
+                            val file = File(getApplication<Application>().filesDir, "covers/${UUID.randomUUID()}.webp")
                             file.parentFile?.mkdirs()
                             file.writeBytes(bytes)
                             finalCoverPath = file.absolutePath
@@ -111,24 +150,25 @@ class ScrapeViewModel(
                 } catch (e: Exception) { e.printStackTrace() }
             }
 
-            val originalExtText = buildString {
-                if (comic.volumeNumber != null) append(" Vol.${comic.volumeNumber}")
-                if (comic.issueNumber != null) append(" #${comic.issueNumber}")
-            }
-            // 重新在远端干净标题上拼接上它本地的原生期号后缀
-            val newTitle = info.title + originalExtText
+            // [组合逻辑] 如果已经有了 Series (Volume)，则使用 Series 标题，而将 Issue 标题作为副标题
+            val seriesName = currentVol?.title ?: info.title
+            val issueTitle = if (currentVol != null) info.issueTitle else null
+            val issueNumber = info.issueNumber ?: comic.issueNumber
 
             val updatedComic = comic.copy(
-                title = newTitle,
+                seriesName = seriesName,
+                issueTitle = if (issueTitle == seriesName) null else issueTitle, // 去重
+                issueNumber = issueNumber,
                 coverCachePath = finalCoverPath,
-                seriesName = info.title,
-                region = info.region, // 用远端库更权威的阵营覆盖本地可能猜错推测的阵营
-                format = if (info.format != xyz.sakulik.comic.model.db.ComicFormat.UNKNOWN) info.format else comic.format, // 用上游剥出来的权威发行形态覆盖原本未定义的猜想
-                authors = info.authors.joinToString(", ").takeIf { it.isNotEmpty() } ?: comic.authors,
-                summary = info.summary ?: comic.summary,
-                genres = info.genres.joinToString(", ").takeIf { it.isNotEmpty() } ?: comic.genres,
-                publisher = info.publisher ?: comic.publisher,
-                rating = info.rating ?: comic.rating
+                remoteSeriesId = currentVol?.remoteId ?: info.remoteId,
+                region = info.region,
+                format = if (info.format != xyz.sakulik.comic.model.db.ComicFormat.UNKNOWN) info.format else comic.format,
+                authors = info.authors.joinToString(", ").takeIf { it.isNotEmpty() } ?: currentVol?.authors?.joinToString(", ") ?: comic.authors,
+                summary = info.summary ?: currentVol?.summary ?: comic.summary,
+                genres = info.genres.joinToString(", ").takeIf { it.isNotEmpty() } ?: currentVol?.genres?.joinToString(", ") ?: comic.genres,
+                publisher = info.publisher ?: currentVol?.publisher ?: comic.publisher,
+                rating = info.rating ?: comic.rating,
+                year = info.year ?: currentVol?.year ?: comic.year
             )
             dao.update(updatedComic)
             

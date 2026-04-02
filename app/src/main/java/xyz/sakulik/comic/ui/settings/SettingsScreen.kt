@@ -19,6 +19,7 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
     val savedApiKey by SettingsDataStore.getComicVineApiKeyFlow(context).collectAsState(initial = "")
     var apiKeyInput by remember(savedApiKey) { mutableStateOf(savedApiKey ?: "") }
 
@@ -37,7 +38,8 @@ fun SettingsScreen(
                     }
                 }
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Column(modifier = Modifier.padding(padding).padding(16.dp).fillMaxSize()) {
             Text("安全认证核心配置", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
@@ -114,14 +116,77 @@ fun SettingsScreen(
             ) {
                 Text("清除本地全量云端数据索引")
             }
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(8.dp))
             Text(
                 "注意：此操作不可逆，将从数据库中移除所有云端漫画记录。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error
             )
+
+            Spacer(modifier = Modifier.height(24.dp))
+            Text("个性化体验", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            val metadataEnabled by SettingsDataStore.getMetadataEnabledFlow(context).collectAsState(initial = true)
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("启用智能元数据", style = MaterialTheme.typography.bodyLarge)
+                    Text("关闭后将停止系列聚合并显示原始文件名", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(
+                    checked = metadataEnabled,
+                    onCheckedChange = { 
+                        scope.launch { SettingsDataStore.saveMetadataEnabled(context, it) }
+                    }
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(24.dp))
+            Text("存储管理", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+            Spacer(modifier = Modifier.height(8.dp))
+
+            val autoClearCovers by SettingsDataStore.getAutoClearCoversFlow(context).collectAsState(initial = false)
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("启动时自动清理封面", style = MaterialTheme.typography.bodyLarge)
+                    Text("极致瘦身模式。开启后每次重启应用都会重置封面库占用的空间", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(
+                    checked = autoClearCovers,
+                    onCheckedChange = { 
+                        scope.launch { SettingsDataStore.saveAutoClearCovers(context, it) }
+                    }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        // 1. 清理全量缓存目录 (Reader 残留)
+                        context.cacheDir.listFiles()?.forEach { it.deleteRecursively() }
+                        // 2. 清理持久化封面
+                        val coverDir = java.io.File(context.filesDir, "covers")
+                        if (coverDir.exists()) coverDir.deleteRecursively()
+                        
+                        snackbarHostState.showSnackbar("✅ 所有缓存与封面已清理完毕")
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("手动一键清理全量数据")
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.weight(1f))
         }
     }
 }

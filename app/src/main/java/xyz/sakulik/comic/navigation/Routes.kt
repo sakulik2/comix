@@ -11,7 +11,8 @@ import kotlinx.serialization.Serializable
 object HomeRoute // 首页漫画库
 
 @Serializable
-data class SeriesDetailRoute(val seriesName: String) // 书系详情页
+data class SeriesDetailRoute(val seriesName: String = "") // 书系详情页
+
 
 @Serializable
 data class ReaderRoute(

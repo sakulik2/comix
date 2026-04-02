@@ -15,11 +15,18 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import xyz.sakulik.comic.navigation.HomeRoute
+import xyz.sakulik.comic.navigation.MetadataSearchRoute
 import xyz.sakulik.comic.navigation.ReaderRoute
 import xyz.sakulik.comic.navigation.SeriesDetailRoute
 import xyz.sakulik.comic.navigation.SettingsRoute
-import xyz.sakulik.comic.navigation.MetadataSearchRoute
+import xyz.sakulik.comic.ui.bookshelf.SeriesDetailContent
 import xyz.sakulik.comic.ui.theme.ComicReaderTheme
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.foundation.layout.padding
+
+
+
 import androidx.lifecycle.viewmodel.compose.viewModel
 import xyz.sakulik.comic.viewmodel.BookshelfViewModel
 import xyz.sakulik.comic.viewmodel.ReaderViewModel
@@ -34,7 +41,9 @@ import xyz.sakulik.comic.model.db.ComicEntity
 /**
  * Android 原生的单 Activity 根节点
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,8 +64,10 @@ class MainActivity : ComponentActivity() {
  * 【类型安全路由大满贯】
  * 利用 Kotlin Serialization 2.8+ 强绑定参数传递
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun ComicAppNavHost() {
+
     val navController = rememberNavController()
 
     NavHost(
@@ -75,12 +86,16 @@ fun ComicAppNavHost() {
                 onComicClick = { comic: ComicEntity ->
                     navController.navigate(ReaderRoute(comicId = comic.id, initialPage = comic.currentPage))
                 },
+                onSeriesClick = { group ->
+                    navController.navigate(SeriesDetailRoute(seriesName = group.seriesName))
+                },
                 onSettingsClick = { 
                     navController.navigate(SettingsRoute)
                 },
                 onManualScrapeClick = { comic ->
                     navController.navigate(MetadataSearchRoute(comicId = comic.id))
                 }
+
             )
         }
 
@@ -90,8 +105,66 @@ fun ComicAppNavHost() {
         // 这里只是为了证明强类型路由的威力
         composable<SeriesDetailRoute> { backStackEntry ->
             val routeParams = backStackEntry.toRoute<SeriesDetailRoute>()
-            Text("正在展示系列泳道分类：${routeParams.seriesName}。需重开UI专门渲染这部分泳道。")
+            val context = androidx.compose.ui.platform.LocalContext.current.applicationContext as Application
+            val bookshelfViewModel = viewModel {
+                BookshelfViewModel(context, AppDatabase.getDatabase(context).comicDao())
+            }
+            
+            val seriesData by bookshelfViewModel.getSeriesByName(routeParams.seriesName).collectAsState(initial = null)
+            val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+            val adaptiveColumns = when {
+                configuration.screenWidthDp < 600 -> 3
+                configuration.screenWidthDp < 840 -> 5
+                else -> 7
+            }
+
+            androidx.compose.material3.Scaffold(
+                topBar = {
+                    androidx.compose.material3.TopAppBar(
+                        navigationIcon = {
+                            androidx.compose.material3.IconButton(onClick = { navController.popBackStack() }) {
+                                androidx.compose.material3.Icon(
+                                    Icons.AutoMirrored.Filled.ArrowBack, 
+                                    contentDescription = "后退"
+                                )
+                            }
+                        },
+                        title = { 
+                            androidx.compose.material3.Text(
+                                routeParams.seriesName, 
+                                maxLines = 1, 
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            ) 
+                        }
+                    )
+                }
+            ) { padding ->
+                if (seriesData != null) {
+                    SeriesDetailContent(
+                        series = seriesData!!,
+                        adaptiveColumns = adaptiveColumns,
+                        onComicClick = { comic ->
+                            navController.navigate(ReaderRoute(comicId = comic.id, initialPage = comic.currentPage))
+                        },
+                        onLongClick = { comic ->
+                            // 跳转至元数据搜索页进行手动更正/刮削
+                            navController.navigate(MetadataSearchRoute(comicId = comic.id))
+                        },
+                        modifier = androidx.compose.ui.Modifier.padding(padding)
+
+                    )
+                } else {
+                    androidx.compose.foundation.layout.Box(
+                        modifier = Modifier.fillMaxSize(), 
+                        contentAlignment = androidx.compose.ui.Alignment.Center
+                    ) {
+                        androidx.compose.material3.CircularProgressIndicator()
+                    }
+                }
+            }
+
         }
+
 
         // ========== [页面 3: 极致化底层沉浸阅读器] ==========
         composable<ReaderRoute> { backStackEntry ->

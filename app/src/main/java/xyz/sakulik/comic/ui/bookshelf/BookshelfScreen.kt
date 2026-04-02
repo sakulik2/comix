@@ -4,10 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -36,12 +34,16 @@ import java.io.File
 import androidx.activity.compose.BackHandler
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.painterResource
+import xyz.sakulik.comic.R
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun BookshelfScreen(
     viewModel: BookshelfViewModel,
     onComicClick: (ComicEntity) -> Unit,
+    onSeriesClick: (SeriesGroupData) -> Unit,
     onSettingsClick: () -> Unit,
     onManualScrapeClick: (ComicEntity) -> Unit
 ) {
@@ -56,8 +58,8 @@ fun BookshelfScreen(
     var showSortMenu by remember { mutableStateOf(false) }
     var showAddMenu by remember { mutableStateOf(false) }
     var showApiDialog by remember { mutableStateOf(false) }
-    var openedSeries by remember { mutableStateOf<SeriesGroupData?>(null) }
     var contextComic by remember { mutableStateOf<ComicEntity?>(null) }
+
     val snackbarHostState = remember { SnackbarHostState() }
 
     // 状态反馈监听
@@ -82,210 +84,156 @@ fun BookshelfScreen(
         else -> 7
     }
 
-    BackHandler(enabled = openedSeries != null) {
-        openedSeries = null
-    }
-
     Scaffold(
         topBar = {
-            if (openedSeries == null) {
-                Column {
-                    TopAppBar(
-                        title = { Text("我的漫库") },
-                        actions = {
-                            IconButton(onClick = onSettingsClick) {
-                                Icon(Icons.Default.Settings, contentDescription = "设置")
-                            }
-                            IconButton(onClick = { viewModel.scanAllFolders() }) {
-                                Icon(Icons.Default.Refresh, contentDescription = "全局扫描同步")
-                            }
-                            IconButton(onClick = { showSortMenu = true }) {
-                                Icon(Icons.AutoMirrored.Filled.List, contentDescription = "排序")
-                            }
-                            DropdownMenu(
-                                expanded = showSortMenu,
-                                onDismissRequest = { showSortMenu = false }
-                            ) {
-                                SortOrder.entries.forEach { order ->
-                                    DropdownMenuItem(
-                                        text = { Text(order.displayName) },
-                                        onClick = {
-                                            viewModel.onSortOrderChanged(order)
-                                            showSortMenu = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    )
-                    ScrollableTabRow(
-                        selectedTabIndex = when(selectedRegion) {
-                            null -> 0
-                            ComicRegion.COMIC -> 1
-                            ComicRegion.MANGA -> 2
-                            ComicRegion.UNKNOWN -> 3
-                        },
-                        edgePadding = 16.dp,
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        divider = {}
-                    ) {
-                        Tab(selected = selectedRegion == null, onClick = { viewModel.setRegionFilter(null) }, text = { Text("全部") })
-                        Tab(selected = selectedRegion == ComicRegion.COMIC, onClick = { viewModel.setRegionFilter(ComicRegion.COMIC) }, text = { Text("美漫") })
-                        Tab(selected = selectedRegion == ComicRegion.MANGA, onClick = { viewModel.setRegionFilter(ComicRegion.MANGA) }, text = { Text("日漫") })
-                        Tab(selected = selectedRegion == ComicRegion.UNKNOWN, onClick = { viewModel.setRegionFilter(ComicRegion.UNKNOWN) }, text = { Text("未分类") })
-                    }
-                }
-            } else {
+            Column {
                 TopAppBar(
-                    navigationIcon = {
-                        IconButton(onClick = { openedSeries = null }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "后退")
+                    title = { Text("我的漫库") },
+                    actions = {
+                        IconButton(onClick = onSettingsClick) {
+                            Icon(Icons.Default.Settings, contentDescription = "设置")
                         }
-                    },
-                    title = { Text(openedSeries!!.seriesName, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        IconButton(onClick = { viewModel.scanAllFolders() }) {
+                            Icon(Icons.Default.Refresh, contentDescription = "全局扫描同步")
+                        }
+                        IconButton(onClick = { showSortMenu = true }) {
+                            Icon(Icons.AutoMirrored.Filled.List, contentDescription = "排序")
+                        }
+                        DropdownMenu(
+                            expanded = showSortMenu,
+                            onDismissRequest = { showSortMenu = false }
+                        ) {
+                            SortOrder.entries.forEach { order ->
+                                DropdownMenuItem(
+                                    text = { Text(order.displayName) },
+                                    onClick = {
+                                        viewModel.onSortOrderChanged(order)
+                                        showSortMenu = false
+                                    }
+                                )
+                            }
+                        }
+                    }
                 )
+                ScrollableTabRow(
+                    selectedTabIndex = when(selectedRegion) {
+                        null -> 0
+                        ComicRegion.COMIC -> 1
+                        ComicRegion.MANGA -> 2
+                        ComicRegion.UNKNOWN -> 3
+                    },
+                    edgePadding = 16.dp,
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    divider = {}
+                ) {
+                    Tab(selected = selectedRegion == null, onClick = { viewModel.setRegionFilter(null) }, text = { Text("全部") })
+                    Tab(selected = selectedRegion == ComicRegion.COMIC, onClick = { viewModel.setRegionFilter(ComicRegion.COMIC) }, text = { Text("美漫") })
+                    Tab(selected = selectedRegion == ComicRegion.MANGA, onClick = { viewModel.setRegionFilter(ComicRegion.MANGA) }, text = { Text("日漫") })
+                    Tab(selected = selectedRegion == ComicRegion.UNKNOWN, onClick = { viewModel.setRegionFilter(ComicRegion.UNKNOWN) }, text = { Text("未分类") })
+                }
             }
         },
         floatingActionButton = {
             val launcher = androidx.activity.compose.rememberLauncherForActivityResult(
                 androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree()
             ) { uri ->
-                uri?.let { viewModel.addFolder(it) }
+                uri?.let { viewModel.addFolder(uri) }
             }
-            if (openedSeries == null) {
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = showAddMenu,
+                    enter = androidx.compose.animation.expandVertically() + androidx.compose.animation.fadeIn(),
+                    exit = androidx.compose.animation.shrinkVertically() + androidx.compose.animation.fadeOut()
                 ) {
-                    // --- 展开后的分离漂浮 Widget (增加 MD3 顺滑动画) ---
-                    androidx.compose.animation.AnimatedVisibility(
-                        visible = showAddMenu,
-                        enter = androidx.compose.animation.expandVertically() + androidx.compose.animation.fadeIn(),
-                        exit = androidx.compose.animation.shrinkVertically() + androidx.compose.animation.fadeOut()
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        Column(
-                            horizontalAlignment = Alignment.End,
-                            verticalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            if (remoteEnabled) {
-                                // 1. 远程云同步
-                                ExtendedFloatingActionButton(
-                                    onClick = { 
-                                        showAddMenu = false
-                                        viewModel.syncRemoteLibrary() 
-                                    },
-                                    icon = { 
-                                        val isLoading = autoScrapeState is AutoScrapeState.Loading && (autoScrapeState as AutoScrapeState.Loading).comicId == -1L
-                                        if (isLoading) CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                                        else Icon(Icons.Default.Refresh, null) 
-                                    },
-                                    text = { 
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text("同步")
-                                            Spacer(Modifier.width(8.dp))
-                                            IconButton(
-                                                onClick = { 
-                                                    showAddMenu = false
-                                                    showApiDialog = true 
-                                                },
-                                                modifier = Modifier.size(20.dp)
-                                            ) {
-                                                Icon(Icons.Default.Settings, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                                            }
-                                        }
-                                    },
-                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                                )
-                            }
-                            // 按钮 1.5：手动配置（长按提示或独立小按钮，此处暂为独立小按钮或长按逻辑）
-                            // 为简化用户操作，我们在“同步”按钮下方增加一个微型配置入口，或者直接修改同步按钮行为
-                            // 2. 本地目录
+                        if (remoteEnabled) {
                             ExtendedFloatingActionButton(
                                 onClick = { 
                                     showAddMenu = false
-                                    launcher.launch(null) 
+                                    viewModel.syncRemoteLibrary() 
                                 },
-                                icon = { Icon(Icons.Default.Folder, null) },
-                                text = { Text("本地") },
-                                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                                icon = { 
+                                    val isLoading = autoScrapeState is AutoScrapeState.Loading && (autoScrapeState as AutoScrapeState.Loading).comicId == -1L
+                                    if (isLoading) CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                                    else Icon(Icons.Default.Refresh, null) 
+                                },
+                                text = { 
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text("同步")
+                                        Spacer(Modifier.width(8.dp))
+                                        IconButton(
+                                            onClick = { 
+                                                showAddMenu = false
+                                                showApiDialog = true 
+                                            },
+                                            modifier = Modifier.size(20.dp)
+                                        ) {
+                                            Icon(Icons.Default.Settings, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                                        }
+                                    }
+                                },
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                             )
                         }
-                    }
-
-                    // --- 主加号按钮 ---
-                    FloatingActionButton(
-                        onClick = { showAddMenu = !showAddMenu },
-                        containerColor = if (showAddMenu) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Icon(
-                            if (showAddMenu) Icons.Default.Close else Icons.Default.Add,
-                            contentDescription = "切换添加模式"
+                        ExtendedFloatingActionButton(
+                            onClick = { 
+                                showAddMenu = false
+                                launcher.launch(null) 
+                            },
+                            icon = { Icon(painterResource(R.drawable.ic_folder), null) },
+                            text = { Text("本地") },
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onTertiaryContainer
                         )
                     }
+                }
+
+                FloatingActionButton(
+                    onClick = { showAddMenu = !showAddMenu },
+                    containerColor = if (showAddMenu) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Icon(
+                        if (showAddMenu) Icons.Default.Close else Icons.Default.Add,
+                        contentDescription = "切换添加模式"
+                    )
                 }
             }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
-            if (openedSeries == null) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = viewModel::onSearchQueryChanged,
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    placeholder = { Text("搜索您的收藏...") },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(100)
-                )
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = viewModel::onSearchQueryChanged,
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                placeholder = { Text("搜索您的收藏...") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                singleLine = true,
+                shape = RoundedCornerShape(100)
+            )
 
-                scanProgress?.let { progress ->
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    Text(text = progress, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                }
+            scanProgress?.let { progress ->
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Text(text = progress, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
 
-                if (items.isEmpty() && searchQuery.isEmpty()) {
-                    // ======== 空状态引导 ========
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(80.dp), tint = MaterialTheme.colorScheme.outlineVariant)
-                            Spacer(Modifier.height(16.dp))
-                            Text("漫库目前是空的", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.outline)
-                            Text("点击右下角按钮添加您的漫画文件夹", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
-                        }
-                    }
-                } else {
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(adaptiveColumns),
-                        contentPadding = PaddingValues(16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        items(items) { item ->
-                            when(item) {
-                                is BookshelfItem.SingleComic -> {
-                                    ComicItem(
-                                        comic = item.comic,
-                                        isScrapingThis = autoScrapeState is AutoScrapeState.Loading && (autoScrapeState as AutoScrapeState.Loading).comicId == item.comic.id,
-                                        onClick = { onComicClick(item.comic) },
-                                        onLongClick = { contextComic = item.comic }
-                                    )
-                                }
-                                is BookshelfItem.SeriesGroup -> {
-                                    SeriesGroupItem(group = item.group, onClick = { openedSeries = item.group })
-                                }
-                            }
-                        }
+            if (items.isEmpty() && searchQuery.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(80.dp), tint = MaterialTheme.colorScheme.outlineVariant)
+                        Spacer(Modifier.height(16.dp))
+                        Text("漫库目前是空的", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.outline)
+                        Text("点击右下角按钮添加您的漫画文件夹", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
                     }
                 }
             } else {
-                // 系列详情展开逻辑
-                val issuesList = openedSeries!!.books.filter { it.format == ComicFormat.ISSUE || it.format == ComicFormat.CHAPTER || (it.format == ComicFormat.UNKNOWN && it.volumeNumber == null) }.sortedBy { it.issueNumber ?: 9999f }
-                val collectedList = openedSeries!!.books.filter { it.format == ComicFormat.HC || it.format == ComicFormat.TPB || it.format == ComicFormat.OMNIBUS || it.format == ComicFormat.TANKOBON || (it.format == ComicFormat.UNKNOWN && it.volumeNumber != null) }.sortedBy { it.volumeNumber ?: 9999f }
-
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(adaptiveColumns),
                     contentPadding = PaddingValues(16.dp),
@@ -293,34 +241,36 @@ fun BookshelfScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    if (collectedList.isNotEmpty()) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(8.dp)) {
-                                Text("合订本 / 卷", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+                    items(items) { item ->
+                        when(item) {
+                            is BookshelfItem.SingleComic -> {
+                                ComicItem(
+                                    item = item,
+                                    isScrapingThis = autoScrapeState is AutoScrapeState.Loading && (autoScrapeState as AutoScrapeState.Loading).comicId == item.comic.id,
+                                    onClick = { onComicClick(item.comic) },
+                                    onLongClick = { contextComic = item.comic }
+                                )
+                            }
+                            is BookshelfItem.SeriesGroup -> {
+                                SeriesGroupItem(
+                                    group = item.group, 
+                                    onClick = { onSeriesClick(item.group) },
+                                    onLongClick = { contextComic = item.group.coverComic }
+                                )
                             }
                         }
-                        items(collectedList) { book -> ComicSwimlaneItem(comic = book, onClick = { onComicClick(book) }) }
-                    }
-                    if (issuesList.isNotEmpty()) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(8.dp), modifier = Modifier.padding(top = 16.dp)) {
-                                Text("单本 / 期", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
-                            }
-                        }
-                        items(issuesList) { book -> ComicSwimlaneItem(comic = book, onClick = { onComicClick(book) }) }
                     }
                 }
             }
         }
     }
 
-    // 长按菜单
     contextComic?.let { comic ->
         ModalBottomSheet(
             onDismissRequest = { contextComic = null },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow, // 采用更轻盈的 MD3 容器底色
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp), // 标准 MD3 大圆角
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             dragHandle = { BottomSheetDefaults.DragHandle() }
         ) {
             Column(
@@ -329,7 +279,6 @@ fun BookshelfScreen(
                     .padding(horizontal = 16.dp)
                     .navigationBarsPadding()
             ) {
-                // --- 头部：标题与关闭 ---
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -353,7 +302,6 @@ fun BookshelfScreen(
                 HorizontalDivider()
                 Spacer(Modifier.height(8.dp))
 
-                // [新功能] 从头开始
                 ListItem(
                     headlineContent = { Text("从头开始", style = MaterialTheme.typography.bodyLarge) },
                     supportingContent = { Text("清除当前阅读进度并返回第一页", style = MaterialTheme.typography.labelSmall) },
@@ -369,7 +317,6 @@ fun BookshelfScreen(
                         .clickable { viewModel.resetComicProgress(comic); contextComic = null }
                 )
                 
-                // 1. 自动刮削
                 ListItem(
                     headlineContent = { Text("一键自动刮削", style = MaterialTheme.typography.bodyLarge) },
                     supportingContent = { Text("AI 智能匹配补全封面与详情", style = MaterialTheme.typography.labelSmall) },
@@ -379,7 +326,7 @@ fun BookshelfScreen(
                             CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
                         } else {
                             Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(12.dp)) {
-                                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.padding(8.dp).size(20.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                                Icon(painterResource(R.drawable.ic_auto_awesome), contentDescription = null, modifier = Modifier.padding(8.dp).size(20.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
                             }
                         }
                     },
@@ -390,7 +337,6 @@ fun BookshelfScreen(
                         .clickable { viewModel.autoScrape(comic); contextComic = null }
                 )
 
-                // 2. 手动搜索
                 ListItem(
                     headlineContent = { Text("搜索元数据", style = MaterialTheme.typography.bodyLarge) },
                     supportingContent = { Text("精确检索 ComicVine 数据库", style = MaterialTheme.typography.labelSmall) },
@@ -409,7 +355,6 @@ fun BookshelfScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // --- 危险功能组 ---
                 Surface(
                     color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.1f),
                     shape = RoundedCornerShape(16.dp),
@@ -429,12 +374,11 @@ fun BookshelfScreen(
                     )
                 }
 
-                Spacer(Modifier.height(32.dp)) // 为系统导航栏留白
+                Spacer(Modifier.height(32.dp))
             }
         }
     }
 
-    // --- 云端 API 配置对话框 (MD3 标准样式) ---
     if (showApiDialog) {
         var inputUrl by remember { mutableStateOf("https://comix.sakulik.xyz/") }
         AlertDialog(
@@ -450,7 +394,7 @@ fun BookshelfScreen(
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         placeholder = { Text("http://api...") },
-                        leadingIcon = { Icon(Icons.Default.Link, contentDescription = null) }
+                        leadingIcon = { Icon(painterResource(R.drawable.ic_link), contentDescription = null) }
                     )
                 }
             },
@@ -475,32 +419,24 @@ fun BookshelfScreen(
     }
 }
 
-@Composable
-fun ComicSwimlaneItem(comic: ComicEntity, onClick: () -> Unit) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick), shape = RoundedCornerShape(12.dp)) {
-        Column {
-            val model = if (comic.source == ComicSource.REMOTE) {
-                comic.coverCachePath // 远程模式下直接使用 URL
-            } else if (comic.coverCachePath != null && File(comic.coverCachePath).exists()) {
-                File(comic.coverCachePath)
-            } else {
-                null
-            }
-            Box(modifier = Modifier.aspectRatio(0.7f).fillMaxWidth()) {
-                AsyncImage(model = model, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                if (comic.totalPages > 0 && comic.currentPage > 0) {
-                    LinearProgressIndicator(progress = { comic.currentPage.toFloat() / comic.totalPages.toFloat() }, modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).height(4.dp))
-                }
-            }
-            Text(text = comic.title, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(8.dp))
-        }
-    }
-}
-
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun ComicItem(comic: ComicEntity, onClick: () -> Unit, onLongClick: () -> Unit, isScrapingThis: Boolean) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick), shape = RoundedCornerShape(12.dp)) {
+fun ComicSwimlaneItem(
+    displayTitle: String,
+    displayBadge: String?,
+    comic: ComicEntity, 
+    onClick: () -> Unit, 
+    onLongClick: () -> Unit
+) {
+    ElevatedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            ), 
+        shape = RoundedCornerShape(12.dp)
+    ) {
         Column {
             val model = if (comic.source == ComicSource.REMOTE) {
                 comic.coverCachePath
@@ -511,37 +447,226 @@ fun ComicItem(comic: ComicEntity, onClick: () -> Unit, onLongClick: () -> Unit, 
             }
             Box(modifier = Modifier.aspectRatio(0.7f).fillMaxWidth()) {
                 AsyncImage(model = model, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                
+                if (displayBadge != null) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
+                        shape = RoundedCornerShape(bottomStart = 8.dp),
+                        modifier = Modifier.align(Alignment.TopEnd)
+                    ) {
+                        Text(text = displayBadge, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp), color = MaterialTheme.colorScheme.onSurface)
+                    }
+                }
+
+                if (comic.totalPages > 0 && comic.currentPage > 0) {
+                    LinearProgressIndicator(progress = { comic.currentPage.toFloat() / comic.totalPages.toFloat() }, modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).height(4.dp))
+                }
+            }
+            Text(
+                text = displayTitle,
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 2,
+                minLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(8.dp)
+            )
+        }
+    }
+}
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+fun ComicItem(
+    item: BookshelfItem.SingleComic,
+    onClick: () -> Unit, 
+    onLongClick: () -> Unit, 
+    isScrapingThis: Boolean
+) {
+    val comic = item.comic
+    ElevatedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick), 
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column {
+            val model = if (comic.source == ComicSource.REMOTE) {
+                comic.coverCachePath
+            } else if (comic.coverCachePath != null && File(comic.coverCachePath).exists()) {
+                File(comic.coverCachePath)
+            } else {
+                null
+            }
+            Box(modifier = Modifier.aspectRatio(0.7f).fillMaxWidth()) {
+                AsyncImage(model = model, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                
+                if (item.displayBadge != null) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
+                        shape = RoundedCornerShape(bottomStart = 8.dp),
+                        modifier = Modifier.align(Alignment.TopEnd)
+                    ) {
+                        Text(text = item.displayBadge, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp), color = MaterialTheme.colorScheme.onSurface)
+                    }
+                }
+
                 if (comic.totalPages > 0 && comic.currentPage > 0) {
                     LinearProgressIndicator(progress = { comic.currentPage.toFloat() / comic.totalPages.toFloat() }, modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).height(4.dp))
                 }
                 if (isScrapingThis) CircularProgressIndicator(modifier = Modifier.size(32.dp).align(Alignment.Center))
             }
-            Text(text = comic.title, style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(8.dp))
+            
+            Text(
+                text = item.displayTitle, 
+                style = MaterialTheme.typography.labelLarge, 
+                maxLines = 2, 
+                minLines = 2, 
+                overflow = TextOverflow.Ellipsis, 
+                modifier = Modifier.padding(8.dp)
+            )
+        }
+    }
+}
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+fun SeriesGroupItem(group: SeriesGroupData, onClick: () -> Unit, onLongClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).aspectRatio(0.7f).offset(y = (-8).dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+        ) {}
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp).aspectRatio(0.7f).offset(y = (-4).dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {}
+        
+        ElevatedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+            Column {
+                val model = if (group.coverComic.source == ComicSource.REMOTE) {
+                    group.coverComic.coverCachePath
+                } else if (group.coverComic.coverCachePath != null && File(group.coverComic.coverCachePath).exists()) {
+                    File(group.coverComic.coverCachePath)
+                } else {
+                    null
+                }
+                Box(modifier = Modifier.aspectRatio(0.7f).fillMaxWidth()) {
+                    AsyncImage(model = model, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    
+                    if (group.displayBadge != null) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.9f),
+                            shape = RoundedCornerShape(bottomStart = 8.dp),
+                            modifier = Modifier.align(Alignment.TopEnd)
+                        ) {
+                            Text(
+                                text = group.displayBadge, 
+                                style = MaterialTheme.typography.labelSmall, 
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp), 
+                                color = MaterialTheme.colorScheme.onSecondary
+                            )
+                        }
+                    }
+
+                    Surface(color = MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(topStart = 8.dp), modifier = Modifier.align(Alignment.BottomEnd)) {
+                        Text(text = "${group.bookCount} 册", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp), color = MaterialTheme.colorScheme.onPrimary)
+                    }
+                }
+                Text(text = group.displayTitle, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(8.dp))
+            }
         }
     }
 }
 
 @Composable
-fun SeriesGroupItem(group: SeriesGroupData, onClick: () -> Unit) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick), shape = RoundedCornerShape(12.dp)) {
-        Column {
-            val model = if (group.coverComic.source == ComicSource.REMOTE) {
-                group.coverComic.coverCachePath
-            } else if (group.coverComic.coverCachePath != null && File(group.coverComic.coverCachePath).exists()) {
-                File(group.coverComic.coverCachePath)
-            } else {
-                null
+fun SeriesHeader(group: SeriesGroupData) {
+    val sample = group.books.firstOrNull { it.summary != null } ?: group.coverComic
+    
+    val yearText = if (group.books.any { it.year != null }) {
+        val years = group.books.mapNotNull { it.year }.distinct().sorted()
+        if (years.size > 1) "${years.first()} - ${years.last()}" else years.first()
+    } else null
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        val model = if (group.coverComic.source == ComicSource.REMOTE) {
+            group.coverComic.coverCachePath
+        } else if (group.coverComic.coverCachePath != null && File(group.coverComic.coverCachePath).exists()) {
+            File(group.coverComic.coverCachePath)
+        } else {
+            null
+        }
+        AsyncImage(
+            model = model, 
+            contentDescription = null, 
+            modifier = Modifier
+                .width(110.dp)
+                .aspectRatio(0.7f)
+                .clip(RoundedCornerShape(8.dp)), 
+            contentScale = ContentScale.Crop
+        )
+        Spacer(Modifier.width(20.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = group.seriesName,
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.Bold
+            )
+            
+            val metaInfo = listOfNotNull(
+                sample.publisher,
+                yearText
+            ).joinToString(" • ")
+            
+            if (metaInfo.isNotBlank()) {
+                Text(
+                    text = metaInfo,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
             }
-            Box(modifier = Modifier.aspectRatio(0.7f).fillMaxWidth()) {
-                Box(modifier = Modifier.fillMaxSize().padding(end = 4.dp, top = 4.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant))
-                Box(modifier = Modifier.fillMaxSize().padding(start = 4.dp, bottom = 4.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                    AsyncImage(model = model, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                    Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(topStart = 8.dp), modifier = Modifier.align(Alignment.BottomEnd)) {
-                        Text(text = "${group.bookCount} 册", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
-                    }
+
+            if (!group.disambiguation.isNullOrBlank()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(4.dp),
+                    modifier = Modifier.padding(vertical = 4.dp)
+                ) {
+                    Text(
+                        text = group.disambiguation, 
+                        style = MaterialTheme.typography.labelSmall, 
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp), 
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
                 }
             }
-            Text(text = group.seriesName, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(8.dp))
+
+            Spacer(Modifier.height(8.dp))
+            
+            Text(
+                text = sample.summary ?: "暂无剧情简介", 
+                style = MaterialTheme.typography.bodySmall, 
+                maxLines = 10,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

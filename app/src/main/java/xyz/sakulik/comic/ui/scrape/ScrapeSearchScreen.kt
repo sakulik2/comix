@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import xyz.sakulik.comic.model.metadata.ScrapeSource
 import xyz.sakulik.comic.model.metadata.ScrapeStrategy
+import xyz.sakulik.comic.viewmodel.ScrapeStep
 import xyz.sakulik.comic.viewmodel.ScrapeViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -36,20 +38,37 @@ fun ScrapeSearchScreen(
     val isSearching by viewModel.isSearching.collectAsState()
     val searchResults by viewModel.searchResults.collectAsState()
     val strategy by viewModel.selectedStrategy.collectAsState()
+    val currentStep by viewModel.currentStep.collectAsState()
+    val selectedVolume by viewModel.selectedVolume.collectAsState()
 
     // 初始加载：拉取这条漫画的原始身世
     LaunchedEffect(comicId) {
-        // 我们借用 dao 在 ViewModel 内部完成从 ID 到 Entity 的还原
         viewModel.loadAndInit(comicId)
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("选取元数据") },
+                title = { 
+                    Text(
+                        text = if (currentStep == ScrapeStep.VOLUME) "搜索系列" else (selectedVolume?.title ?: "选取分期"),
+                        style = MaterialTheme.typography.titleLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "取消")
+                    IconButton(onClick = {
+                        if (currentStep == ScrapeStep.ISSUE) {
+                            viewModel.goBackToVolumeSearch()
+                        } else {
+                            onBack()
+                        }
+                    }) {
+                        Icon(
+                            imageVector = if (currentStep == ScrapeStep.ISSUE) Icons.AutoMirrored.Filled.ArrowBack else Icons.Default.Close,
+                            contentDescription = "返回"
+                        )
                     }
                 }
             )
@@ -60,57 +79,75 @@ fun ScrapeSearchScreen(
                 .padding(padding)
                 .fillMaxSize()
         ) {
-            // 顶部搜索控制台
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = viewModel::onQueryChanged,
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("输入关键词搜素...") },
-                        trailingIcon = {
-                            if (isSearching) {
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                            } else {
-                                IconButton(onClick = { viewModel.search() }) {
-                                    Icon(Icons.Default.Search, contentDescription = "搜索")
+            // 只有在系列搜索阶段才显示搜索框和策略
+            if (currentStep == ScrapeStep.VOLUME) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = viewModel::onQueryChanged,
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text("输入关键词搜素系列...") },
+                            trailingIcon = {
+                                if (isSearching) {
+                                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                                } else {
+                                    IconButton(onClick = { viewModel.search() }) {
+                                        Icon(Icons.Default.Search, contentDescription = "搜索")
+                                    }
                                 }
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        
+                        Spacer(Modifier.height(12.dp))
+                        
+                        Text("搜索策略", style = MaterialTheme.typography.labelMedium)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            ScrapeStrategy.entries.forEach { s ->
+                                FilterChip(
+                                    selected = strategy == s,
+                                    onClick = { viewModel.onStrategyChanged(s) },
+                                    label = { Text(s.displayName) }
+                                )
                             }
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                    
-                    Spacer(Modifier.height(12.dp))
-                    
-                    Text("搜索策略", style = MaterialTheme.typography.labelMedium)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        ScrapeStrategy.entries.forEach { s ->
-                            FilterChip(
-                                selected = strategy == s,
-                                onClick = { viewModel.onStrategyChanged(s) },
-                                label = { Text(s.displayName) }
-                            )
                         }
                     }
+                }
+            } else {
+                // 如果在期号选择阶段，显示一个简单的提示栏
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.secondaryContainer
+                ) {
+                    Text(
+                        text = "正在浏览系列「${selectedVolume?.title}」下的全部分期",
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
                 }
             }
 
             if (searchResults.isEmpty() && !isSearching) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("没有结果，请尝试更换关键词", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (currentStep == ScrapeStep.VOLUME) "没有搜到系列，请尝试更换关键词" else "该系列下暂无匹配分期",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             } else {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(150.dp),
+                    columns = GridCells.Adaptive(if (currentStep == ScrapeStep.VOLUME) 150.dp else 120.dp),
                     contentPadding = PaddingValues(16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -121,53 +158,101 @@ fun ScrapeSearchScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    viewModel.applyMetadataBySelection(result) {
-                                        onBack()
+                                    if (currentStep == ScrapeStep.VOLUME) {
+                                        viewModel.selectVolume(result)
+                                    } else {
+                                        viewModel.applyMetadataBySelection(result) {
+                                            onBack()
+                                        }
                                     }
                                 },
                             shape = RoundedCornerShape(8.dp)
                         ) {
                             Column {
-                                Box(modifier = Modifier.aspectRatio(0.7f)) {
+                                Box(modifier = Modifier.aspectRatio(0.75f)) {
                                     AsyncImage(
                                         model = result.coverUrl,
                                         contentDescription = result.title,
                                         modifier = Modifier.fillMaxSize(),
                                         contentScale = ContentScale.Crop
                                     )
-                                    // 来源角标
-                                    Surface(
-                                        color = if (result.source == ScrapeSource.COMIC_VINE) Color(0xFFE53935) else Color(0xFF00B0FF),
-                                        modifier = Modifier
-                                            .align(Alignment.TopEnd)
-                                            .padding(4.dp)
-                                            .clip(RoundedCornerShape(4.dp))
-                                    ) {
-                                        Text(
-                                            text = if (result.source == ScrapeSource.COMIC_VINE) "CV" else "BG",
-                                            color = Color.White,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                    
+                                    // 仅在系列界面显示来源或期号汇总
+                                    if (currentStep == ScrapeStep.VOLUME) {
+                                        Surface(
+                                            color = if (result.source == ScrapeSource.COMIC_VINE) Color(0xFFE53935) else Color(0xFF00B0FF),
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .padding(4.dp)
+                                                .clip(RoundedCornerShape(4.dp))
+                                        ) {
+                                            Text(
+                                                text = if (result.source == ScrapeSource.COMIC_VINE) "CV" else "BG",
+                                                color = Color.White,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    } else if (result.issueNumber != null) {
+                                        // 在期号选择界面显示 #1 等角标
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.primaryContainer,
+                                            modifier = Modifier
+                                                .align(Alignment.TopStart)
+                                                .padding(4.dp)
+                                                .clip(RoundedCornerShape(4.dp))
+                                        ) {
+                                            val iss = result.issueNumber
+                                            Text(
+                                                text = "#${if (iss % 1f == 0f) iss.toInt() else iss}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
                                     }
                                 }
-                                Column(modifier = Modifier.padding(8.dp)) {
+                                Column(
+                                    modifier = Modifier
+                                        .padding(8.dp)
+                                        .fillMaxWidth()
+                                ) {
+                                    val displayTitle = if (currentStep == ScrapeStep.VOLUME) {
+                                        result.title
+                                    } else {
+                                        // 智能去重：如果分期名和系列名一样，且有副标题，优先显示副标题
+                                        result.issueTitle ?: result.title
+                                    }
+                                    
+                                    // 强制固定高度（2行），防止因文字长短导致的垂直偏移
                                     Text(
-                                        text = result.title,
+                                        text = displayTitle,
                                         style = MaterialTheme.typography.titleSmall,
                                         maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
+                                        minLines = 2, // 确保即便是1行也占位2行
+                                        overflow = TextOverflow.Ellipsis,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        lineHeight = androidx.compose.ui.unit.TextUnit.Unspecified // 保持默认
                                     )
-                                    result.publisher?.let {
-                                        Text(
-                                            text = it,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
+                                    
+                                    Spacer(Modifier.height(4.dp))
+                                    
+                                    val subInfo = if (currentStep == ScrapeStep.VOLUME) {
+                                        result.year
+                                    } else {
+                                        result.issueNumber?.let { iss ->
+                                            "#${if (iss % 1f == 0f) iss.toInt() else iss}"
+                                        }
                                     }
+                                    
+                                    Text(
+                                        text = subInfo ?: " ", // 用空格占位保持对齐
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1
+                                    )
                                 }
                             }
                         }

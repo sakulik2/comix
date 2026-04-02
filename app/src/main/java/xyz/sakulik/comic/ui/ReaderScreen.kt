@@ -23,6 +23,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import androidx.compose.ui.res.painterResource
+import xyz.sakulik.comic.R
 import xyz.sakulik.comic.model.loader.ComicPageLoader
 import xyz.sakulik.comic.ui.components.ComicPageItem
 import xyz.sakulik.comic.ui.components.WebtoonReader
@@ -210,14 +212,14 @@ fun ReaderScreen(
                 actions = {
                     IconButton(onClick = onToggleSharpen) {
                         Icon(
-                            imageVector = Icons.Default.AutoAwesome, 
+                            painter = painterResource(R.drawable.ic_auto_awesome), 
                             contentDescription = if (isSharpenEnabled) "关闭增强" else "开启增强",
                             tint = if (isSharpenEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                         )
                     }
                     IconButton(onClick = onToggleReaderMode) {
                         Icon(
-                            imageVector = if (readerMode == ReaderMode.PAGER) Icons.Default.VerticalDistribute else Icons.Default.ViewCarousel, 
+                            painter = if (readerMode == ReaderMode.PAGER) painterResource(R.drawable.ic_vertical_distribute) else painterResource(R.drawable.ic_view_carousel), 
                             contentDescription = "切换模式"
                         )
                     }

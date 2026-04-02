@@ -55,7 +55,7 @@ object CoverExtractor {
     }
 
     private fun extractCbzCover(context: Context, uri: Uri, outPath: File): Boolean {
-        // [双程探针逻辑] 第一轮：找出字典序最靠前的图片文件名
+        // [1] 找出字典序最靠前的图片文件名
         var bestName: String? = null
         context.contentResolver.openInputStream(uri)?.use { input ->
             val zis = ZipInputStream(input)
@@ -73,19 +73,13 @@ object CoverExtractor {
 
         if (bestName == null) return false
 
-        // 第二轮：按名索骥提取该图片数据
+        // [2] 提取该图片数据
         context.contentResolver.openInputStream(uri)?.use { input ->
             val zis = ZipInputStream(input)
             var entry = zis.nextEntry
             while (entry != null) {
                 if (entry.name == bestName) {
-                    val bytes = zis.readBytes()
-                    val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-                    options.inSampleSize = calculateInSampleSize(options, 400, 600)
-                    options.inJustDecodeBounds = false
-                    options.inPreferredConfig = Bitmap.Config.RGB_565
-                    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                    val bitmap = decodeStreamWithThreshold(context, zis)
                     if (bitmap != null) {
                         saveBitmapToWebp(bitmap, outPath)
                         bitmap.recycle()
@@ -100,7 +94,6 @@ object CoverExtractor {
     }
 
     private fun extractCbrCover(context: Context, uri: Uri, outPath: File): Boolean {
-        // [隔离矩阵] 使用 UUID 命名临时文件，彻底阻断扫描任务间的竞态冲突 (Fix: 封面串号)
         val sessionId = java.util.UUID.randomUUID().toString()
         val tempFile = File(context.cacheDir, "scan_temp_$sessionId.cbr")
         try {
@@ -110,35 +103,70 @@ object CoverExtractor {
                 }
             }
             
-            val archive = Archive(tempFile)
-            val firstImage = archive.fileHeaders
-                .filter { !it.isDirectory && isImage(it.fileName) }
-                .minByOrNull { it.fileName.lowercase() }
-            
-            if (firstImage != null) {
-                val tempImg = File(context.cacheDir, "scan_temp_img_$sessionId.tmp")
-                FileOutputStream(tempImg).use { out ->
-                    archive.extractFile(firstImage, out)
-                }
+            Archive(tempFile).use { archive ->
+                val firstImage = archive.fileHeaders
+                    .filter { !it.isDirectory && isImage(it.fileName) }
+                    .minByOrNull { it.fileName.lowercase() }
                 
+                if (firstImage != null) {
+                    archive.getInputStream(firstImage).use { imgIn ->
+                        val bitmap = decodeStreamWithThreshold(context, imgIn)
+                        if (bitmap != null) {
+                            saveBitmapToWebp(bitmap, outPath)
+                            bitmap.recycle()
+                        }
+                    }
+                }
+            }
+        } finally {
+            tempFile.delete()
+        }
+        return outPath.exists()
+    }
+
+    private fun decodeStreamWithThreshold(context: Context, input: java.io.InputStream): Bitmap? {
+        val MAX_MEMORY_IMG_SIZE = 15 * 1024 * 1024 
+        val baos = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(16384)
+        var totalRead = 0
+        var exceeded = false
+        
+        while (true) {
+            val read = input.read(buffer)
+            if (read == -1) break
+            totalRead += read
+            if (totalRead > MAX_MEMORY_IMG_SIZE) {
+                exceeded = true
+                break
+            }
+            baos.write(buffer, 0, read)
+        }
+
+        if (!exceeded) {
+            val bytes = baos.toByteArray()
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+            options.inSampleSize = calculateInSampleSize(options, 400, 600)
+            options.inJustDecodeBounds = false
+            options.inPreferredConfig = Bitmap.Config.RGB_565
+            return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+        } else {
+            val tempImg = File(context.cacheDir, "scan_fallback_${java.util.UUID.randomUUID()}.tmp")
+            try {
+                FileOutputStream(tempImg).use { out ->
+                    baos.writeTo(out)
+                    input.copyTo(out)
+                }
                 val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeFile(tempImg.absolutePath, options)
                 options.inSampleSize = calculateInSampleSize(options, 400, 600)
                 options.inJustDecodeBounds = false
                 options.inPreferredConfig = Bitmap.Config.RGB_565
-                
-                val bitmap = BitmapFactory.decodeFile(tempImg.absolutePath, options)
-                if (bitmap != null) {
-                    saveBitmapToWebp(bitmap, outPath)
-                    bitmap.recycle()
-                }
+                return BitmapFactory.decodeFile(tempImg.absolutePath, options)
+            } finally {
                 tempImg.delete()
             }
-            archive.close()
-        } finally {
-            tempFile.delete()
         }
-        return outPath.exists()
     }
 
     private fun saveBitmapToWebp(bitmap: Bitmap, outPath: File) {
