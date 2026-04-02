@@ -24,6 +24,7 @@ import xyz.sakulik.comic.ui.theme.ComicReaderTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.remember
 
 
 
@@ -67,18 +68,19 @@ class MainActivity : ComponentActivity() {
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun ComicAppNavHost() {
-
+    val application = androidx.compose.ui.platform.LocalContext.current.applicationContext as Application
     val navController = rememberNavController()
 
     NavHost(
         navController = navController,
-        startDestination = HomeRoute
+        startDestination = HomeRoute,
+        modifier = Modifier.fillMaxSize()
     ) {
         // ========== [页面 1: 首页漫画库] ==========
-        composable<HomeRoute> {
-            val context = androidx.compose.ui.platform.LocalContext.current.applicationContext as Application
-            val bookshelfViewModel = viewModel {
-                BookshelfViewModel(context, AppDatabase.getDatabase(context).comicDao())
+        composable<HomeRoute> { backStackEntry ->
+            // 书架 ViewModel 绑定到 HomeRoute 的生命周期，并注入其自带的 SavedStateHandle
+            val bookshelfViewModel: BookshelfViewModel = viewModel(viewModelStoreOwner = backStackEntry) {
+                BookshelfViewModel(application, AppDatabase.getDatabase(application).comicDao(), backStackEntry.savedStateHandle)
             }
 
             BookshelfScreen(
@@ -95,19 +97,16 @@ fun ComicAppNavHost() {
                 onManualScrapeClick = { comic ->
                     navController.navigate(MetadataSearchRoute(comicId = comic.id))
                 }
-
             )
         }
 
         // ========== [页面 2: 系列详情页] ==========
-        // 暂未用到专门的 ViewModel，直接由 Bookshelf 的分组列表流转即可，但需要设计独立的展开屏
-        // 为了目前跑通，我们在此可以将 BookshelfViewModel 直接提升作用域范围（例如依附于 parent navGraph）
-        // 这里只是为了证明强类型路由的威力
         composable<SeriesDetailRoute> { backStackEntry ->
             val routeParams = backStackEntry.toRoute<SeriesDetailRoute>()
-            val context = androidx.compose.ui.platform.LocalContext.current.applicationContext as Application
-            val bookshelfViewModel = viewModel {
-                BookshelfViewModel(context, AppDatabase.getDatabase(context).comicDao())
+            // 重要：通过 navController 找回 HomeRoute 的 BackStackEntry，从而获取共享的 BookshelfViewModel
+            val homeEntry = remember(backStackEntry) { navController.getBackStackEntry(HomeRoute) }
+            val bookshelfViewModel: BookshelfViewModel = viewModel(viewModelStoreOwner = homeEntry) {
+                BookshelfViewModel(application, AppDatabase.getDatabase(application).comicDao(), homeEntry.savedStateHandle)
             }
             
             val seriesData by bookshelfViewModel.getSeriesByName(routeParams.seriesName).collectAsState(initial = null)
@@ -168,15 +167,19 @@ fun ComicAppNavHost() {
 
         // ========== [页面 3: 极致化底层沉浸阅读器] ==========
         composable<ReaderRoute> { backStackEntry ->
-            val routeParams = backStackEntry.toRoute<ReaderRoute>()
-            
-            // 使用原生方式获取包含 SavedStateHandle 和 Dao 的独立 ViewModel
-            val context = androidx.compose.ui.platform.LocalContext.current.applicationContext as Application
-            val readerViewModel = viewModel(key = "reader_${routeParams.comicId}") {
+            val route = backStackEntry.toRoute<ReaderRoute>()
+            // 使用 NavBackStackEntry 自身的 SavedStateHandle 构造 ViewModel
+            val readerViewModel = viewModel {
+                val savedStateHandle = backStackEntry.savedStateHandle
+                // 显式同步强类型参数到 SavedStateHandle，确保 ViewModel 内部读取不为空
+                if (!savedStateHandle.contains("comicId")) {
+                    savedStateHandle["comicId"] = route.comicId
+                    savedStateHandle["initialPage"] = route.initialPage
+                }
                 xyz.sakulik.comic.viewmodel.ReaderViewModel(
-                    context, 
-                    AppDatabase.getDatabase(context).comicDao(), 
-                    androidx.lifecycle.SavedStateHandle(mapOf("comicId" to routeParams.comicId, "initialPage" to routeParams.initialPage))
+                    application, 
+                    AppDatabase.getDatabase(application).comicDao(), 
+                    savedStateHandle
                 )
             }
             
@@ -184,51 +187,50 @@ fun ComicAppNavHost() {
             val isRtl by readerViewModel.isRtl.collectAsState()
             val currentComic = readerViewModel.currentEntity
 
-            if (currentComic != null) {
-                when (val s = state) {
-                    is xyz.sakulik.comic.viewmodel.ComicState.Idle, is xyz.sakulik.comic.viewmodel.ComicState.Loading -> {
-                        androidx.compose.foundation.layout.Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(androidx.compose.ui.graphics.Color(0xFF0D0D0F))
-                        ) {
-                            androidx.compose.material3.CircularProgressIndicator(
-                                modifier = Modifier.align(Alignment.Center),
-                                color = androidx.compose.ui.graphics.Color(0xFFE53935)
-                            )
-                        }
+            // 修正：即使 currentComic 为 null，只要状态是 Loading，也要展示进度条
+            when (val s = state) {
+                is xyz.sakulik.comic.viewmodel.ComicState.Idle, is xyz.sakulik.comic.viewmodel.ComicState.Loading -> {
+                    androidx.compose.foundation.layout.Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(androidx.compose.ui.graphics.Color(0xFF0D0D0F))
+                    ) {
+                        androidx.compose.material3.CircularProgressIndicator(
+                            modifier = Modifier.align(Alignment.Center),
+                            color = androidx.compose.ui.graphics.Color(0xFFE53935)
+                        )
                     }
-                    is xyz.sakulik.comic.viewmodel.ComicState.Ready -> {
-                        val readerMode by readerViewModel.readerMode.collectAsState()
-                        val isImmersive by readerViewModel.isImmersive.collectAsState()
-                        val isSharpenEnabled by readerViewModel.isSharpenEnabled.collectAsState()
+                }
+                is xyz.sakulik.comic.viewmodel.ComicState.Ready -> {
+                    val readerMode by readerViewModel.readerMode.collectAsState()
+                    val isImmersive by readerViewModel.isImmersive.collectAsState()
+                    val isSharpenEnabled by readerViewModel.isSharpenEnabled.collectAsState()
 
-                        xyz.sakulik.comic.ui.ReaderScreen(
-                            loader = s.loader,
-                            readerMode = readerMode,
-                            pageCount = s.pageCount,
-                            comicTitle = s.fileName,
-                            initialPage = readerViewModel.matchedInitialPage,
-                            isRtl = isRtl,
-                            isImmersive = isImmersive,
-                            isSharpenEnabled = isSharpenEnabled,
-                            onPageChanged = { page ->
-                                readerViewModel.updateProgress(page, s.pageCount)
-                            },
-                            onBack = { navController.popBackStack() },
-                            onScrapeClick = { /* 开启刮削面板 */ },
-                            onToggleRtl = { readerViewModel.toggleRtl() },
-                            onToggleSharpen = { readerViewModel.toggleSharpen() },
-                            onToggleReaderMode = { readerViewModel.toggleReaderMode() },
-                            onToggleImmersive = { readerViewModel.setImmersive(it) }
-                        )
-                    }
-                    is xyz.sakulik.comic.viewmodel.ComicState.Error -> {
-                        xyz.sakulik.comic.ui.components.ErrorScreen(
-                            message = s.message,
-                            onBack = { navController.popBackStack() }
-                        )
-                    }
+                    xyz.sakulik.comic.ui.ReaderScreen(
+                        loader = s.loader,
+                        readerMode = readerMode,
+                        pageCount = s.pageCount,
+                        comicTitle = s.fileName,
+                        initialPage = readerViewModel.matchedInitialPage,
+                        isRtl = isRtl,
+                        isImmersive = isImmersive,
+                        isSharpenEnabled = isSharpenEnabled,
+                        onPageChanged = { page ->
+                            readerViewModel.updateProgress(page, s.pageCount)
+                        },
+                        onBack = { navController.popBackStack() },
+                        onScrapeClick = { /* 开启刮削面板 */ },
+                        onToggleRtl = { readerViewModel.toggleRtl() },
+                        onToggleSharpen = { readerViewModel.toggleSharpen() },
+                        onToggleReaderMode = { readerViewModel.toggleReaderMode() },
+                        onToggleImmersive = { readerViewModel.setImmersive(it) }
+                    )
+                }
+                is xyz.sakulik.comic.viewmodel.ComicState.Error -> {
+                    xyz.sakulik.comic.ui.components.ErrorScreen(
+                        message = s.message,
+                        onBack = { navController.popBackStack() }
+                    )
                 }
             }
         }
@@ -249,12 +251,12 @@ fun ComicAppNavHost() {
         }
 
         // ========== [页面 6: 全局设置中心] ==========
-        composable<SettingsRoute> {
-            val context = androidx.compose.ui.platform.LocalContext.current.applicationContext as Application
-            val bookshelfViewModel = viewModel {
-                BookshelfViewModel(context, AppDatabase.getDatabase(context).comicDao())
+        composable<SettingsRoute> { backStackEntry ->
+            val homeEntry = remember(backStackEntry) { navController.getBackStackEntry(HomeRoute) }
+            val bookshelfViewModel: BookshelfViewModel = viewModel(viewModelStoreOwner = homeEntry) {
+                BookshelfViewModel(application, AppDatabase.getDatabase(application).comicDao(), homeEntry.savedStateHandle)
             }
-            
+
             xyz.sakulik.comic.ui.settings.SettingsScreen(
                 onBack = { navController.popBackStack() },
                 onClearRemoteLibrary = { 

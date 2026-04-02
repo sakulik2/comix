@@ -28,6 +28,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import androidx.lifecycle.SavedStateHandle
 import androidx.work.workDataOf
 import java.io.File
 import java.util.UUID
@@ -63,7 +64,8 @@ sealed class BookshelfItem {
 
 class BookshelfViewModel(
     application: Application,
-    private val dao: ComicDao
+    private val dao: ComicDao,
+    private val savedStateHandle: SavedStateHandle
 ) : AndroidViewModel(application) {
 
     private val sharedOkHttpClient = OkHttpClient()
@@ -73,17 +75,17 @@ class BookshelfViewModel(
         scanAllFolders()
     }
     
-    private val _sortOrder = MutableStateFlow(SortOrder.LAST_READ)
-    val sortOrder = _sortOrder.asStateFlow()
+    private val _sortOrder = savedStateHandle.getStateFlow("sortOrder", SortOrder.LAST_READ)
+    val sortOrder = _sortOrder
 
-    private val _searchQuery = MutableStateFlow("")
-    val searchQuery = _searchQuery.asStateFlow()
+    private val _searchQuery = savedStateHandle.getStateFlow("searchQuery", "")
+    val searchQuery = _searchQuery
 
-    private val _selectedRegionFilter = MutableStateFlow<ComicRegion?>(null)
-    val selectedRegionFilter = _selectedRegionFilter.asStateFlow()
+    private val _selectedRegionFilter = savedStateHandle.getStateFlow<ComicRegion?>("regionFilter", null)
+    val selectedRegionFilter = _selectedRegionFilter
 
-    private val _selectedFormatFilter = MutableStateFlow<ComicFormat?>(null)
-    val selectedFormatFilter = _selectedFormatFilter.asStateFlow()
+    private val _selectedFormatFilter = savedStateHandle.getStateFlow<ComicFormat?>("formatFilter", null)
+    val selectedFormatFilter = _selectedFormatFilter
 
     // 云端同步开关状态
     val remoteEnabled = SettingsDataStore.getRemoteEnabledFlow(application)
@@ -234,10 +236,10 @@ class BookshelfViewModel(
         }.flowOn(Dispatchers.Default) // [核心优化] 强制在计算线程执行，守护 UI 60 帧
     }
 
-    fun onSortOrderChanged(order: SortOrder) { _sortOrder.value = order }
-    fun onSearchQueryChanged(query: String) { _searchQuery.value = query }
-    fun setRegionFilter(region: ComicRegion?) { _selectedRegionFilter.value = region }
-    fun setFormatFilter(format: ComicFormat?) { _selectedFormatFilter.value = format }
+    fun onSortOrderChanged(order: SortOrder) { savedStateHandle["sortOrder"] = order }
+    fun onSearchQueryChanged(query: String) { savedStateHandle["searchQuery"] = query }
+    fun setRegionFilter(region: ComicRegion?) { savedStateHandle["regionFilter"] = region }
+    fun setFormatFilter(format: ComicFormat?) { savedStateHandle["formatFilter"] = format }
 
     fun addFolder(treeUri: Uri) {
         // 关键：持久化 SAF 树 URI 的读取权限。

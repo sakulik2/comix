@@ -32,6 +32,8 @@ class ReaderViewModel(
 
     // 之前用 Hilt 给 backStackEntry 直接注入 ViewModel 时，toRoute 可以自动拆箱。
     // 现在用了原生自定义包含 HashMap 的 SavedStateHandle，手动从 key-value 读出才是安全的对抗！
+    // 从 SavedStateHandle 中读取由 Navigation Compose 自动填充的参数。
+    // 注意：Navigation 2.8+ 默认会将 @Serializable 路由的所有参数存入 SavedStateHandle。
     val matchedComicId: Long = savedStateHandle.get<Long>("comicId") ?: -1L
     val matchedInitialPage: Int = savedStateHandle.get<Int>("initialPage") ?: 0
 

@@ -27,6 +27,7 @@ class LocalArchivePageLoader(
 ) : ComicPageLoader {
 
     private val archiveMutex = Mutex()
+    private val mirrorMutex = Mutex()
     private val sessionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
     // 会话缓存目录：基于 URI Hash 确保唯一性
@@ -40,8 +41,8 @@ class LocalArchivePageLoader(
     private val extractedFiles = ConcurrentHashMap<Int, File>()
     
     // 【核心加速器 v4.0】针对 content:// 协议的本地镜像文件。
-    // 一旦有了镜像，我们将彻底告别低效的 InputStream 线性扫描。
     private var sessionMirror: File? = null
+    @Volatile private var isMirrorReady = false
     
     // 档案条目信息缓存（按文件名排序确保页码一致性）
     private var cachedEntries: List<String>? = null
@@ -65,8 +66,6 @@ class LocalArchivePageLoader(
                 val b = it.next()
                 if (!b.isRecycled && b.isMutable && b.allocationByteCount >= requiredBytes) {
                     it.remove()
-                    // 注意：如果尺寸不完全一致，需手动重置其有效区域或通过 Canvas 局部绘制。
-                    // 这里由于我们是全量覆盖绘制，所以只需成功获取内存块即可。
                     b.eraseColor(android.graphics.Color.TRANSPARENT)
                     return b
                 }
@@ -82,7 +81,7 @@ class LocalArchivePageLoader(
     private fun releaseBitmap(bitmap: Bitmap?) {
         if (bitmap == null || bitmap.isRecycled) return
         synchronized(bitmapPool) {
-            if (bitmapPool.size < 5) { // 限制池大小以保留更多堆空间给系统
+            if (bitmapPool.size < 5) {
                 bitmapPool.add(bitmap)
             } else {
                 bitmap.recycle()
@@ -91,32 +90,40 @@ class LocalArchivePageLoader(
     }
 
     private suspend fun ensureSessionMirror(): File? {
-        if (sessionMirror?.exists() == true) return sessionMirror
+        if (isMirrorReady) return sessionMirror
         if (uri.scheme == "file") {
             sessionMirror = File(uri.path!!)
+            isMirrorReady = true
             return sessionMirror
         }
         
+        // 【核心优化】使用独立的 mirrorMutex，不再阻塞 getPageData 的首屏加载路径
         return withContext(Dispatchers.IO) {
-            try {
-                val tempFile = File(sessionDir, "mirror_${System.currentTimeMillis()}.tmp")
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(tempFile).use { out ->
-                        // 【优化 1：大 Buffer 高速拷贝】
-                        // 提高从 content:// 读取的吞吐量
-                        val buffer = ByteArray(131072) // 128KB
-                        var bytes = input.read(buffer)
-                        while (bytes >= 0) {
-                            out.write(buffer, 0, bytes)
-                            bytes = input.read(buffer)
+            mirrorMutex.withLock {
+                if (isMirrorReady) return@withLock sessionMirror
+                
+                try {
+                    val start = System.currentTimeMillis()
+                    val tempFile = File(sessionDir, "mirror_${System.currentTimeMillis()}.tmp")
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        FileOutputStream(tempFile).use { out ->
+                            // 【优化：256KB 大 Buffer】
+                            val buffer = ByteArray(262144) 
+                            var bytes = input.read(buffer)
+                            while (bytes >= 0) {
+                                out.write(buffer, 0, bytes)
+                                bytes = input.read(buffer)
+                            }
                         }
                     }
+                    sessionMirror = tempFile
+                    isMirrorReady = true
+                    android.util.Log.d("ArchiveLoader", "Mirror created in ${System.currentTimeMillis() - start}ms: ${tempFile.length()} bytes")
+                    tempFile
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    null
                 }
-                sessionMirror = tempFile
-                tempFile
-            } catch (e: Exception) {
-                e.printStackTrace()
-                null
             }
         }
     }
@@ -169,25 +176,21 @@ class LocalArchivePageLoader(
     }
 
     override suspend fun getPageData(pageIndex: Int, width: Int, height: Int): Any? = withContext(Dispatchers.IO) {
-        // PDF 路径是动态渲染，不经过滑动窗口解压
         if (extension.lowercase() == "pdf") {
             return@withContext loadPdfPage(pageIndex, width, height)
         }
 
-        // 【优化 3：内存直通解码 (Direct Decoding)】
-        // 如果当前页仍在提取中，不再等待磁盘，直接从档案流中解码首屏。
-        // 这规避了 “压缩包 -> 临时文件 -> 位图” 这种冗余的磁盘 IO 闭环。
-        archiveMutex.withLock {
-            val file = extractedFiles[pageIndex]
-            if (file?.exists() == true) {
-                return@withContext decodeImageFile(file, width, height)
-            }
-            
-            // 【优化 4：首屏秒开 Fallback】
-            // 如果镜像尚未完成（大文件镜像可能需要数秒），直接从原始 URI 流式抓取当前页。
-            // 这一步能让用户在打开 1GB 文件时瞬间看到第一页，而不是盯着黑屏等镜像完成。
-            val mirror = sessionMirror
-            if (mirror == null || !mirror.exists()) {
+        // 1. 尝试从已解析缓存直接读取（最快路径，无需加锁，extractedFiles 是并发 Map）
+        val cachedFile = extractedFiles[pageIndex]
+        if (cachedFile?.exists() == true) {
+            return@withContext decodeImageFile(cachedFile, width, height)
+        }
+
+        // 2. 【核心优化】如果镜像未就绪，立即走流式快速通道（Streaming Fallback）
+        // 此路径不持有 archiveMutex，完全不因后台镜像拷贝而卡顿
+        if (!isMirrorReady) {
+            android.util.Log.i("ArchiveLoader", "Mirror not ready, using streaming fallback for page $pageIndex")
+            try {
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     when (extension.lowercase()) {
                         "cbz", "zip" -> {
@@ -215,9 +218,14 @@ class LocalArchivePageLoader(
                         }
                     }
                 }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
+        }
 
-            val readyMirror = ensureSessionMirror() ?: return@withContext null
+        // 3. 常规路径：镜像已就绪，进入同步加锁提取区
+        archiveMutex.withLock {
+            val readyMirror = ensureSessionMirror() ?: return@withLock null
             when (extension.lowercase()) {
                 "cbz", "zip" -> {
                     java.util.zip.ZipFile(readyMirror).use { zip ->
