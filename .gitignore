@@ -4,6 +4,7 @@ build/
 
 # Kotlin
 /build
+.kotlin/
 *.kotlin_module
 
 # Android Studio / IntelliJ IDEA
