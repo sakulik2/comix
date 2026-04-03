@@ -30,9 +30,14 @@ class ComicApplication : Application() {
                 SettingsDataStore.getAutoClearCoversFlow(this@ComicApplication).first().let { enabled ->
                     if (enabled) {
                         val coverDir = File(filesDir, "covers")
-                        if (coverDir.exists()) coverDir.deleteRecursively()
+                        if (coverDir.exists()) {
+                            coverDir.listFiles()?.forEach { it.delete() }
+                        }
                     }
                 }
+                
+                //\ 3 清理所有 session 目录（双重保障）
+                cacheDir.listFiles { _, name -> name.startsWith("session_") }?.forEach { it.deleteRecursively() }
             } catch (e: Exception) {
                 e.printStackTrace()
             }

@@ -110,7 +110,12 @@ class ReaderViewModel(
                 _state.value = ComicState.Ready(pageCount, entity.title, ext, uri, loader)
             } catch (e: Exception) {
                 e.printStackTrace()
-                _state.value = ComicState.Error(e.message ?: "解析失败，可能是文件损坏或格式不支持")
+                val message = when {
+                    e.message?.contains("ENOSPC") == true -> "手机存储空间不足，无法加载漫画"
+                    e is java.io.FileNotFoundException -> "找不到漫画文件，请检查 SD 卡是否已卸载"
+                    else -> e.message ?: "解析失败，可能是文件损坏或格式不支持"
+                }
+                _state.value = ComicState.Error(message)
             }
         }
     }

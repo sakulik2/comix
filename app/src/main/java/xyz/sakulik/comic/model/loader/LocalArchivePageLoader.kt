@@ -43,6 +43,7 @@ class LocalArchivePageLoader(
     // content:// URI 的本地镜像文件，用于支持 RAR/ZIP 随机访问
     private var sessionMirror: File? = null
     @Volatile private var isMirrorReady = false
+    @Volatile private var isStreamingOnly = false
     
     // 档案条目信息缓存（按文件名排序确保页码一致性）
     private var cachedEntries: List<String>? = null
@@ -90,7 +91,7 @@ class LocalArchivePageLoader(
     }
 
     private suspend fun ensureSessionMirror(): File? {
-        if (isMirrorReady) return sessionMirror
+        if (isMirrorReady || isStreamingOnly) return sessionMirror
         if (uri.scheme == "file") {
             sessionMirror = File(uri.path!!)
             isMirrorReady = true
@@ -100,14 +101,25 @@ class LocalArchivePageLoader(
         // mirrorMutex 独立于 archiveMutex，避免镜像打制阵封 getPageData 的首屏加载路径
         return withContext(Dispatchers.IO) {
             mirrorMutex.withLock {
-                if (isMirrorReady) return@withLock sessionMirror
+                if (isMirrorReady || isStreamingOnly) return@withLock sessionMirror
                 
                 try {
+                    val fileSize = getUriSize(uri)
+                    val available = getAvailableSpace()
+                    
+                    // [策略引擎]：
+                    // 1. 如果文件 > 2GB，强制转入流式模式（防 OOM 且防磁盘爆仓）
+                    // 2. 如果剩余磁盘空间不足以支撑文件大小 + 500MB 安全缓冲，强制转入流式模式
+                    if (fileSize > 2L * 1024 * 1024 * 1024 || available < fileSize + 500 * 1024 * 1024) {
+                        isStreamingOnly = true
+                        android.util.Log.i("ArchiveLoader", "Storage pressure or huge file (${fileSize} bytes), skipping mirror.")
+                        return@withLock null
+                    }
+
                     val start = System.currentTimeMillis()
                     val tempFile = File(sessionDir, "mirror_${System.currentTimeMillis()}.tmp")
                     context.contentResolver.openInputStream(uri)?.use { input ->
                         FileOutputStream(tempFile).use { out ->
-                            // 使用 256KB 缓冲区提升 content:// 读取吞吐量
                             val buffer = ByteArray(262144) 
                             var bytes = input.read(buffer)
                             while (bytes >= 0) {
@@ -121,6 +133,10 @@ class LocalArchivePageLoader(
                     android.util.Log.d("ArchiveLoader", "Mirror created in ${System.currentTimeMillis() - start}ms: ${tempFile.length()} bytes")
                     tempFile
                 } catch (e: Exception) {
+                    if (e.message?.contains("ENOSPC") == true) {
+                        isStreamingOnly = true
+                        android.util.Log.w("ArchiveLoader", "ENOSPC detected during mirroring, switching to streaming mode.")
+                    }
                     e.printStackTrace()
                     null
                 }
@@ -128,14 +144,59 @@ class LocalArchivePageLoader(
         }
     }
 
+    private fun getUriSize(uri: Uri): Long {
+        if (uri.scheme == "file") return File(uri.path ?: "").length()
+        return try {
+            context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getLong(0) else 0L
+            } ?: 0L
+        } catch (e: Exception) { 0L }
+    }
+
+    private fun getAvailableSpace(): Long {
+        return try {
+            val stat = android.os.StatFs(context.cacheDir.path)
+            stat.availableBlocksLong * stat.blockSizeLong
+        } catch (e: Exception) { Long.MAX_VALUE }
+    }
+
     override suspend fun getPageCount(): Int = withContext(Dispatchers.IO) {
         archiveMutex.withLock {
             try {
                 if (cachedEntries != null) return@withLock cachedEntries!!.size
                 
-                // 确保镜像就绪（针对 PDF 同样适用，PdfRenderer 的 PFD 本身就是随机访问的）
-                val archiveFile = ensureSessionMirror() ?: return@withLock 0
+                val archiveFile = ensureSessionMirror()
                 
+                // [优化路径]：如果镜像尚未就绪（或因 2GB 限制、空间不足跳过），采用流式扫描元数据
+                if (archiveFile == null) {
+                    android.util.Log.i("ArchiveLoader", "Scanning metadata via stream...")
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        val names = mutableListOf<String>()
+                        when (extension.lowercase()) {
+                            "cbz", "zip" -> {
+                                ZipInputStream(input).use { zis ->
+                                    var entry = zis.nextEntry
+                                    while (entry != null) {
+                                        if (!entry.isDirectory && isImage(entry.name)) names.add(entry.name)
+                                        zis.closeEntry()
+                                        entry = zis.nextEntry
+                                    }
+                                }
+                            }
+                            "cbr", "rar" -> {
+                                Archive(input).use { archive ->
+                                    archive.fileHeaders.forEach { header ->
+                                        if (!header.isDirectory && isImage(header.fileName ?: "")) names.add(header.fileName)
+                                    }
+                                }
+                            }
+                        }
+                        cachedEntries = names.sorted()
+                        return@withLock names.size
+                    }
+                    return@withLock 0
+                }
+
                 if (extension.lowercase() == "pdf") {
                     openPdfSync()
                     return@withLock pdfRenderer?.pageCount ?: 0
@@ -225,21 +286,50 @@ class LocalArchivePageLoader(
 
         //\ 3 常规路径：镜像已就绪，进入同步加锁提取区
         archiveMutex.withLock {
-            val readyMirror = ensureSessionMirror() ?: return@withLock null
-            when (extension.lowercase()) {
-                "cbz", "zip" -> {
-                    java.util.zip.ZipFile(readyMirror).use { zip ->
-                        val entries = zip.entries().asSequence().filter { !it.isDirectory && isImage(it.name) }.sortedBy { it.name }.toList()
-                        if (pageIndex in entries.indices) {
-                            zip.getInputStream(entries[pageIndex]).use { return@withContext decodeImageStream(it, width, height) }
+            val readyMirror = ensureSessionMirror()
+            if (readyMirror != null) {
+                when (extension.lowercase()) {
+                    "cbz", "zip" -> {
+                        java.util.zip.ZipFile(readyMirror).use { zip ->
+                            val entries = zip.entries().asSequence().filter { !it.isDirectory && isImage(it.name) }.sortedBy { it.name }.toList()
+                            if (pageIndex in entries.indices) {
+                                zip.getInputStream(entries[pageIndex]).use { return@withContext decodeImageStream(it, width, height) }
+                            }
+                        }
+                    }
+                    "cbr", "rar" -> {
+                        Archive(readyMirror).use { archive ->
+                            val headers = archive.fileHeaders.filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
+                            if (pageIndex in headers.indices) {
+                                archive.getInputStream(headers[pageIndex]).use { return@withContext decodeImageStream(it, width, height) }
+                            }
                         }
                     }
                 }
-                "cbr", "rar" -> {
-                    Archive(readyMirror).use { archive ->
-                        val headers = archive.fileHeaders.filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
-                        if (pageIndex in headers.indices) {
-                            archive.getInputStream(headers[pageIndex]).use { return@withContext decodeImageStream(it, width, height) }
+            } else if (isStreamingOnly) {
+                // 如果是强制流式模式，直接从流中提取
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    when (extension.lowercase()) {
+                        "cbz", "zip" -> {
+                            val zis = ZipInputStream(input)
+                            var entry = zis.nextEntry
+                            var idx = 0
+                            while (entry != null) {
+                                if (!entry.isDirectory && isImage(entry.name)) {
+                                    if (idx == pageIndex) return@withContext decodeImageStream(zis, width, height)
+                                    idx++
+                                }
+                                zis.closeEntry()
+                                entry = zis.nextEntry
+                            }
+                        }
+                        "cbr", "rar" -> {
+                            Archive(input).use { archive ->
+                                val headers = archive.fileHeaders.filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
+                                if (pageIndex in headers.indices) {
+                                    archive.getInputStream(headers[pageIndex]).use { return@withContext decodeImageStream(it, width, height) }
+                                }
+                            }
                         }
                     }
                 }
@@ -364,38 +454,66 @@ class LocalArchivePageLoader(
         if (neededIndices.isEmpty()) return
 
         try {
-            when (extension.lowercase()) {
-                "cbz", "zip" -> {
-                    val archiveFile = ensureSessionMirror() ?: return
-                    java.util.zip.ZipFile(archiveFile).use { zipFile ->
-                        // 单次遍历批量提取窗口内条目
-                        // 一次遍历扫描出窗口内所有条目，彻底消除重复扫描开销
-                        val items = zipFile.entries().asSequence()
-                            .filter { !it.isDirectory && isImage(it.name) }
-                            .sortedBy { it.name }
-                            .toList()
+            val archiveFile = ensureSessionMirror()
+            if (archiveFile != null) {
+                when (extension.lowercase()) {
+                    "cbz", "zip" -> {
+                        java.util.zip.ZipFile(archiveFile).use { zipFile ->
+                            val items = zipFile.entries().asSequence()
+                                .filter { !it.isDirectory && isImage(it.name) }
+                                .sortedBy { it.name }
+                                .toList()
 
-                        neededIndices.forEach { idx ->
-                            if (idx in items.indices) {
-                                zipFile.getInputStream(items[idx]).use { input ->
-                                    saveEntryToCache(input, idx)
+                            neededIndices.forEach { idx ->
+                                if (idx in items.indices) {
+                                    zipFile.getInputStream(items[idx]).use { input ->
+                                        saveEntryToCache(input, idx)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    "cbr", "rar" -> {
+                        Archive(archiveFile).use { archive ->
+                            val headers = archive.fileHeaders
+                                .filter { !it.isDirectory && isImage(it.fileName) }
+                                .sortedBy { it.fileName }
+                            
+                            neededIndices.forEach { idx ->
+                                if (idx in headers.indices) {
+                                    archive.getInputStream(headers[idx]).use { imgIn ->
+                                        saveEntryToCache(imgIn, idx)
+                                    }
                                 }
                             }
                         }
                     }
                 }
-                "cbr", "rar" -> {
-                    val archiveFile = ensureSessionMirror() ?: return
-                    Archive(archiveFile).use { archive ->
-                        // RAR 索引常驻单次遍历
-                        val headers = archive.fileHeaders
-                            .filter { !it.isDirectory && isImage(it.fileName) }
-                            .sortedBy { it.fileName }
-                        
-                        neededIndices.forEach { idx ->
-                            if (idx in headers.indices) {
-                                archive.getInputStream(headers[idx]).use { imgIn ->
-                                    saveEntryToCache(imgIn, idx)
+            } else if (isStreamingOnly) {
+                // 流式模式下的批量预提取
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    when (extension.lowercase()) {
+                        "cbz", "zip" -> {
+                            val zis = ZipInputStream(input)
+                            var entry = zis.nextEntry
+                            var idx = 0
+                            val targetSet = neededIndices.toSet()
+                            while (entry != null && targetSet.any { it >= idx }) {
+                                if (!entry.isDirectory && isImage(entry.name)) {
+                                    if (idx in targetSet) saveEntryToCache(zis, idx)
+                                    idx++
+                                }
+                                zis.closeEntry()
+                                entry = zis.nextEntry
+                            }
+                        }
+                        "cbr", "rar" -> {
+                            Archive(input).use { archive ->
+                                val headers = archive.fileHeaders.filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
+                                neededIndices.forEach { idx ->
+                                    if (idx in headers.indices) {
+                                        archive.getInputStream(headers[idx]).use { saveEntryToCache(it, idx) }
+                                    }
                                 }
                             }
                         }
