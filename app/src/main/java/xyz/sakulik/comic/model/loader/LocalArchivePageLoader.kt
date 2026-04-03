@@ -121,7 +121,9 @@ class LocalArchivePageLoader(
             }
             true
         } catch (e: Exception) {
-            android.util.Log.e("ArchiveLoader", "Session failed [CRITICAL]: ${e.message}", e)
+            if (e !is kotlinx.coroutines.CancellationException) {
+                android.util.Log.e("ArchiveLoader", "Session failed [CRITICAL]: ${e.message}", e)
+            }
             closeActiveSession()
             false
         }
@@ -239,7 +241,10 @@ class LocalArchivePageLoader(
     }
 
     override suspend fun getPageCount(): Int = withContext(Dispatchers.IO) {
+        val startTime = System.currentTimeMillis()
+        android.util.Log.v("ArchiveLoader", "Awaiting archiveMutex for getPageCount...")
         archiveMutex.withLock {
+            android.util.Log.v("ArchiveLoader", "Acquired archiveMutex for getPageCount (waited ${System.currentTimeMillis() - startTime}ms)")
             try {
                 if (cachedEntries != null) return@withLock cachedEntries!!.size
                 
@@ -259,6 +264,12 @@ class LocalArchivePageLoader(
                     } else null
                     
                     if (count != null) return@withLock count
+                    
+                    val fSize = getUriSize(uri)
+                    if (fSize > 500 * 1024 * 1024) {
+                        android.util.Log.e("ArchiveLoader", "NIO Session failed for HUGE file ($fSize bytes). Refusing sequential scan fallback to avoid UI lockup.")
+                        return@withLock 0
+                    }
 
                     android.util.Log.i("ArchiveLoader", "Scanning metadata via sequential stream (Slow Path)...")
                     context.contentResolver.openInputStream(uri)?.use { input ->
@@ -319,7 +330,7 @@ class LocalArchivePageLoader(
         }
     }
 
-    override suspend fun getPageData(pageIndex: Int, width: Int, height: Int): Any? = withContext(Dispatchers.IO) {
+   override suspend fun getPageData(pageIndex: Int, width: Int, height: Int): Any? = withContext(Dispatchers.IO) {
         if (extension.lowercase() == "pdf") return@withContext loadPdfPage(pageIndex, width, height)
 
         // 1. 缓存优先 (Sliding Window 预解析结果)
@@ -328,7 +339,9 @@ class LocalArchivePageLoader(
         // 快速检查：如果协程已取消（用户已划走），直接退出，不争夺锁
         ensureActive()
 
+        android.util.Log.v("ArchiveLoader", "Awaiting archiveMutex for getPageData($pageIndex)...")
         val finalResult = archiveMutex.withLock {
+            android.util.Log.v("ArchiveLoader", "Acquired archiveMutex for getPageData($pageIndex)")
             // 拿到锁后再次检查有效性
             if (!kotlin.coroutines.coroutineContext.isActive) return@withLock null
             
@@ -344,13 +357,21 @@ class LocalArchivePageLoader(
                             "cbz", "zip" -> {
                                 val entryName = entry as String
                                 android.util.Log.d("ArchiveLoader", "NIO ZIP: fetching $entryName")
-                                activeZipFile?.let { zip ->
+                                
+                                // Attempt 1: System ZipFile (via /proc/self/fd)
+                                var result = activeZipFile?.let { zip ->
                                     zip.getEntry(entryName)?.let { zipEntry ->
                                         zip.getInputStream(zipEntry).use { decodeImageStream(it, width, height) }
                                     }
-                                } ?: activeZipIndexer?.let { indexer ->
-                                    indexer.getEntryInputStream(entryName)?.use { decodeImageStream(it, width, height) }
                                 }
+                                
+                                // Attempt 2: Manual ZipFastIndexer fallback
+                                if (result == null) {
+                                    result = activeZipIndexer?.let { indexer ->
+                                        indexer.getEntryInputStream(entryName)?.use { decodeImageStream(it, width, height) }
+                                    }
+                                }
+                                result
                             }
                             "cbr", "rar" -> {
                                 val header = entry as com.github.junrar.rarfile.FileHeader
@@ -362,7 +383,9 @@ class LocalArchivePageLoader(
                             else -> null
                         }
                     } catch (e: Exception) {
-                        android.util.Log.e("ArchiveLoader", "NIO Fetch failed: ${e.message}", e)
+                        if (e !is kotlinx.coroutines.CancellationException) {
+                            android.util.Log.e("ArchiveLoader", "NIO Fetch failed: ${e.message}", e)
+                        }
                         null
                     }
                     if (result != null) {
@@ -572,7 +595,9 @@ class LocalArchivePageLoader(
                     }
                 }
             } catch (e: Exception) {
-                android.util.Log.e("ArchiveLoader", "Background pre-fetch failed for page $idx: ${e.message}")
+                if (e !is kotlinx.coroutines.CancellationException) {
+                    android.util.Log.e("ArchiveLoader", "Background pre-fetch failed for page $idx: ${e.message}")
+                }
             }
         }
         cleanupOldCache(targetIndex)
@@ -770,7 +795,11 @@ class LocalArchivePageLoader(
                 val lfhBuf = ByteBuffer.allocate(30).order(ByteOrder.LITTLE_ENDIAN)
                 channel.read(lfhBuf, meta.localHeaderOffset)
                 lfhBuf.flip()
-                if (lfhBuf.getInt() != 0x04034b50) return null
+                val sig = lfhBuf.getInt()
+                if (sig != 0x04034b50) {
+                    android.util.Log.e("ArchiveLoader", "NIO ZIP LFH Sig Mismatch at ${meta.localHeaderOffset} for $name: expected 04034b50, got ${Integer.toHexString(sig)}")
+                    return null
+                }
                 
                 lfhBuf.position(8)
                 val method = lfhBuf.getShort().toInt() and 0xFFFF
@@ -840,8 +869,8 @@ class LocalArchivePageLoader(
             val size = channel.size()
             if (size < 22) return
             
-            // 1. 寻找 Standard EOCD
-            val scanLength = (65536 + 22).toLong().coerceAtMost(size)
+            // 1. 寻找 Standard EOCD (扩展扫描范围以应对包含大量非压缩数据的档案)
+            val scanLength = (256 * 1024 + 22).toLong().coerceAtMost(size)
             val scanStart = size - scanLength
             val scanBuf = ByteBuffer.allocate(scanLength.toInt()).order(ByteOrder.LITTLE_ENDIAN)
             channel.read(scanBuf, scanStart)
@@ -934,33 +963,34 @@ class LocalArchivePageLoader(
                 
                 val nameBytes = ByteArray(nameLen)
                 cdBuf.get(nameBytes)
-                val name = String(nameBytes)
+                val name = String(nameBytes, kotlin.text.Charsets.UTF_8)
                 
                 if (extraLen > 0) {
                     val extraStart = cdBuf.position()
                     var p = 0
                     while (p + 4 <= extraLen) {
+                        cdBuf.position(extraStart + p)
                         val tag = cdBuf.getShort().toInt() and 0xFFFF
                         val dataSize = cdBuf.getShort().toInt() and 0xFFFF
+                        
                         if (tag == 0x0001) {
-                            // ZIP64 Extra: 根据 CD 记录中的 0xFFFFFFFF 标志来读取对应字段
-                            var currentExtraPos = extraStart + p + 4
-                            if (uncompSize == 0xFFFFFFFFL && currentExtraPos + 8 <= extraStart + 4 + dataSize) {
-                                currentExtraPos += 8
+                            // ZIP64 Extra: 根据 CD 记录中的 0xFFFFFFFF 标志来顺序读取字段
+                            var posInExtra = 0
+                            if (uncompSize == 0xFFFFFFFFL && posInExtra + 8 <= dataSize) {
+                                posInExtra += 8
                             }
-                            if (compSize == 0xFFFFFFFFL && currentExtraPos + 8 <= extraStart + 4 + dataSize) {
-                                cdBuf.position(currentExtraPos)
-                                compSize = cdBuf.getLong()
-                                currentExtraPos += 8
+                            if (compSize == 0xFFFFFFFFL && posInExtra + 8 <= dataSize) {
+                                posInExtra += 8
                             }
-                            if (localHeaderOffset == 0xFFFFFFFFL && currentExtraPos + 8 <= extraStart + 4 + dataSize) {
-                                cdBuf.position(currentExtraPos)
+                            if (localHeaderOffset == 0xFFFFFFFFL && posInExtra + 8 <= dataSize) {
+                                cdBuf.position(extraStart + p + 4 + posInExtra)
                                 localHeaderOffset = cdBuf.getLong()
+                                android.util.Log.v("ArchiveLoader", "NIO ZIP: Found 64-bit offset for $name: $localHeaderOffset")
                             }
                             break
                         }
+                        
                         p += 4 + dataSize
-                        cdBuf.position(extraStart + p)
                     }
                     cdBuf.position(extraStart + extraLen)
                 }
