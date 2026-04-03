@@ -30,7 +30,7 @@
 -keepclasseswithmembers class ** {
     kotlinx.serialization.KSerializer serializer(...);
 }
--keep,allowobfuscation,allowoptimization class xyz.sakulik.comic.navigation.** { *; }
+-keep class xyz.sakulik.comic.navigation.** { *; }
 
 # --- Coil (图片加载) ---
 -keep class coil.** { *; }
