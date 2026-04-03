@@ -16,9 +16,9 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.ZipInputStream
 
 /**
- * 【重工业重构版】本地档案实现：支持 .cbr, .cbz, .pdf。
- * 遵循 [方案 A]：采用滑动窗口解压策略，平衡磁盘空间与 IO 性能。
- * 针对 PDF 使用下采样与 RGB_565，通过会话机制管理临时文件生命周期。
+ * 本地档案页面加载器，支持 .cbr, .cbz, .pdf 格式
+ * 采用滑动窗口解压策略，平衡磁盘空间与 IO 性能
+ * 平行维护 content:// URI 的本地镜像，实现随机访问
  */
 class LocalArchivePageLoader(
     private val context: Context,
@@ -40,7 +40,7 @@ class LocalArchivePageLoader(
     // 已提取的页面映射：PageIndex -> TempFile
     private val extractedFiles = ConcurrentHashMap<Int, File>()
     
-    // 【核心加速器 v4.0】针对 content:// 协议的本地镜像文件。
+    // content:// URI 的本地镜像文件，用于支持 RAR/ZIP 随机访问
     private var sessionMirror: File? = null
     @Volatile private var isMirrorReady = false
     
@@ -55,7 +55,7 @@ class LocalArchivePageLoader(
     private var isSharpenEnabled = false
     fun setSharpenEnabled(enabled: Boolean) { isSharpenEnabled = enabled }
 
-    // 【内存护航】简单的 Bitmap 复用池
+    // Bitmap 复用池，减少堆分配压力
     private val bitmapPool = java.util.Collections.synchronizedList(mutableListOf<Bitmap>())
 
     private fun obtainBitmap(w: Int, h: Int, config: Bitmap.Config): Bitmap {
@@ -97,7 +97,7 @@ class LocalArchivePageLoader(
             return sessionMirror
         }
         
-        // 【核心优化】使用独立的 mirrorMutex，不再阻塞 getPageData 的首屏加载路径
+        // mirrorMutex 独立于 archiveMutex，避免镜像打制阵封 getPageData 的首屏加载路径
         return withContext(Dispatchers.IO) {
             mirrorMutex.withLock {
                 if (isMirrorReady) return@withLock sessionMirror
@@ -107,7 +107,7 @@ class LocalArchivePageLoader(
                     val tempFile = File(sessionDir, "mirror_${System.currentTimeMillis()}.tmp")
                     context.contentResolver.openInputStream(uri)?.use { input ->
                         FileOutputStream(tempFile).use { out ->
-                            // 【优化：256KB 大 Buffer】
+                            // 使用 256KB 缓冲区提升 content:// 读取吞吐量
                             val buffer = ByteArray(262144) 
                             var bytes = input.read(buffer)
                             while (bytes >= 0) {
@@ -180,13 +180,13 @@ class LocalArchivePageLoader(
             return@withContext loadPdfPage(pageIndex, width, height)
         }
 
-        // 1. 尝试从已解析缓存直接读取（最快路径，无需加锁，extractedFiles 是并发 Map）
+        //\ 1 尝试从已解析缓存直接读取（最快路径，无需加锁，extractedFiles 是并发 Map）
         val cachedFile = extractedFiles[pageIndex]
         if (cachedFile?.exists() == true) {
             return@withContext decodeImageFile(cachedFile, width, height)
         }
 
-        // 2. 【核心优化】如果镜像未就绪，立即走流式快速通道（Streaming Fallback）
+        // 如果镜像未就绪，使用流式快速通道（Streaming Fallback）
         // 此路径不持有 archiveMutex，完全不因后台镜像拷贝而卡顿
         if (!isMirrorReady) {
             android.util.Log.i("ArchiveLoader", "Mirror not ready, using streaming fallback for page $pageIndex")
@@ -223,7 +223,7 @@ class LocalArchivePageLoader(
             }
         }
 
-        // 3. 常规路径：镜像已就绪，进入同步加锁提取区
+        //\ 3 常规路径：镜像已就绪，进入同步加锁提取区
         archiveMutex.withLock {
             val readyMirror = ensureSessionMirror() ?: return@withLock null
             when (extension.lowercase()) {
@@ -246,23 +246,22 @@ class LocalArchivePageLoader(
             }
         }
         
-        // 2. 发起预加载
+        //\ 2 发起预加载
         triggerSlidingWindow(pageIndex)
         null
     }
 
     /**
-     * 【极致化混合渲染 v5.0】
-     * 针对性能瓶颈进行的致命打击：
-     * 1. 对于 < 15MB 的图片（99% 的漫画页），直接在内存中 `readBytes` 并解码，速度极快。
-     * 2. 只有当图片极大时，才降级使用临时文件防止 OOM。
+     * 针对内存占用优化的渲染策略：
+     * 对于较小的图片直接在内存中解码以提升速度，
+     * 对于超大图片则通过临时文件降级处理，防止 OOM
      */
     private fun decodeImageStream(input: java.io.InputStream, reqWidth: Int, reqHeight: Int): Bitmap? {
         val MAX_MEMORY_IMG_SIZE = 15 * 1024 * 1024 // 15MB 阈值
         
         try {
-            // 我们不能直接调用 input.available()，因为它在流式压缩包下通常不准确。
-            // 采用 ByteArrayOutputStream 捕获最多 MAX_MEMORY_IMG_SIZE 字节。
+            //\ 我们不能直接调用 inputavailable()，因为它在流式压缩包下通常不准确
+            // 采用 ByteArrayOutputStream 捕获最多 MAX_MEMORY_IMG_SIZE 字节
             val baos = java.io.ByteArrayOutputStream()
             val buffer = ByteArray(16384)
             var totalRead = 0
@@ -351,7 +350,7 @@ class LocalArchivePageLoader(
 
     /**
      * 滑动窗口提取核心：[方案 A] 的实现
-     * 提取 [targetIndex - 5, targetIndex + 5] 范围内的图片。
+     * 提取 [targetIndex - 5, targetIndex + 5] 范围内的图片
      */
     private suspend fun extractWindow(targetIndex: Int) {
         val count = getPageCount()
@@ -369,7 +368,7 @@ class LocalArchivePageLoader(
                 "cbz", "zip" -> {
                     val archiveFile = ensureSessionMirror() ?: return
                     java.util.zip.ZipFile(archiveFile).use { zipFile ->
-                        // 【优化 2：单 PASS 批量抓取】
+                        // 单次遍历批量提取窗口内条目
                         // 一次遍历扫描出窗口内所有条目，彻底消除重复扫描开销
                         val items = zipFile.entries().asSequence()
                             .filter { !it.isDirectory && isImage(it.name) }
@@ -488,7 +487,7 @@ class LocalArchivePageLoader(
         paint.alpha = 100 // 混合强度
         canvas.drawBitmap(src, 1f, 1f, paint) 
         
-        // 【重大修复】处理完毕，归还原始图到池中，释放显存
+        // 处理完毕，归还原始 Bitmap 到复用池
         releaseBitmap(src)
         
         return dest
@@ -516,9 +515,9 @@ class LocalArchivePageLoader(
         val targetW = options.outWidth / sampleSize
         val targetH = options.outHeight / sampleSize
         
-        // 【核心科技：inBitmap 弹性物理复用】
-        // 只要池中 Bitmap 的总字节数 (byteCount) 大于等于目标尺寸，即可复用（Android 4.4+ 支持）。
-        // 这极大地提升了复用命中率，因为不需要长宽完全相等。
+        //\ inBitmap 弹性复用（Android 44+ 支持只要内存足够即可复用）
+        //\ 只要池中 Bitmap 的总字节数 (byteCount) 大于等于目标尺寸，即可复用（Android 44+ 支持）
+        // 这极大地提升了复用命中率，因为不需要长宽完全相等
         synchronized(bitmapPool) {
             val it = bitmapPool.iterator()
             val requiredBytes = targetW * targetH * (if (options.inPreferredConfig == Bitmap.Config.RGB_565) 2 else 4)

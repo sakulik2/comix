@@ -118,7 +118,7 @@ fun SettingsScreen(
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                "注意：此操作不可逆，将从数据库中移除所有云端漫画记录。",
+                "注意：此操作不可逆，将从数据库中移除所有云端漫画记录",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error
             )
@@ -157,7 +157,7 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("启动时自动清理封面", style = MaterialTheme.typography.bodyLarge)
-                    Text("极致瘦身模式。开启后每次重启应用都会重置封面库占用的空间", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("极致瘦身模式开启后每次重启应用都会重置封面库占用的空间", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Switch(
                     checked = autoClearCovers,
@@ -171,9 +171,9 @@ fun SettingsScreen(
             OutlinedButton(
                 onClick = {
                     scope.launch {
-                        // 1. 清理全量缓存目录 (Reader 残留)
+                        //\ 1 清理全量缓存目录 (Reader 残留)
                         context.cacheDir.listFiles()?.forEach { it.deleteRecursively() }
-                        // 2. 清理持久化封面
+                        //\ 2 清理持久化封面
                         val coverDir = java.io.File(context.filesDir, "covers")
                         if (coverDir.exists()) coverDir.deleteRecursively()
                         

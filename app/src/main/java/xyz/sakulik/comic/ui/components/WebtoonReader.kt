@@ -11,8 +11,8 @@ import androidx.compose.ui.unit.dp
 import xyz.sakulik.comic.model.loader.ComicPageLoader
 
 /**
- * 纵向卷轴（Webtoon）阅读引擎。
- * 针对大图流优化的 LazyColumn 实现。
+ * 纵向卷轴（Webtoon）阅读引擎
+ * 针对大图流优化的 LazyColumn 实现
  */
 @Composable
 fun WebtoonReader(

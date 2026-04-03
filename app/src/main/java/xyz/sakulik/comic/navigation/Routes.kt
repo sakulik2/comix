@@ -3,7 +3,7 @@ package xyz.sakulik.comic.navigation
 import kotlinx.serialization.Serializable
 
 /**
- * 依托于 Navigation Compose 2.8+ 的强类型安全路由表。
+ * 依托于 Navigation Compose 2.8+ 的强类型安全路由表
  * 通过 @Serializable 实现物理级的不可篡改与防崩溃传递！
  */
 

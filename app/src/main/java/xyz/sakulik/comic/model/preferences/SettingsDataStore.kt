@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.map
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
 /**
- * 聚合偏好配置存取服务组件
+ * 管理应用设置与偏好数据的存取类
  */
 object SettingsDataStore {
     
@@ -62,7 +62,7 @@ object SettingsDataStore {
     }
 
     /**
-     * 【开关】是否显示远程书架书籍
+     * 是否显示远程书籍
      */
     fun getRemoteEnabledFlow(context: Context): Flow<Boolean> {
         return context.dataStore.data.map { preferences ->
@@ -77,7 +77,7 @@ object SettingsDataStore {
     }
 
     /**
-     * 【开关】是否启用元数据清洗与自动对齐
+     * 是否启用元数据清洗功能
      */
     fun getMetadataEnabledFlow(context: Context): Flow<Boolean> {
         return context.dataStore.data.map { preferences ->
@@ -92,7 +92,7 @@ object SettingsDataStore {
     }
 
     /**
-     * 【主开关】是否在启动时自动清除持久化封面缓存（激进清理模式）
+     * 启动时是否自动清理封面缓存
      */
     fun getAutoClearCoversFlow(context: Context): Flow<Boolean> {
         return context.dataStore.data.map { preferences ->

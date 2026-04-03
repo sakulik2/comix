@@ -111,9 +111,9 @@ class BookshelfViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     /**
-     * 【大核心折叠中枢流出节点】 
-     * 运用 combine 并发结合数据库与多种交互参数。
-     * 为了避免超过 5 个参数导致类型推断失败，我们将过滤器参数先行聚合。
+     * 将数据库流与搜索/过滤/排序状态组合，输出最终用于书架 UI 的内容列表
+     * 运用 combine 并发结合数据库与多种交互参数
+     * 为了避免超过 5 个参数导致类型推断失败，我们将过滤器参数先行聚合
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     val groupedItems: StateFlow<List<BookshelfItem>> = combine(
@@ -156,20 +156,20 @@ class BookshelfViewModel(
         val uselessKeywords = setOf("hc", "sc", "tpb", "gn", "ohc")
 
         return sourceFlow.map { rawList ->
-            // 1. 处理过滤
+            //\ 1 处理过滤
             var filteredList = rawList
             if (!remoteEnabled) filteredList = filteredList.filter { it.source != ComicSource.REMOTE }
             if (regionFilter != null) filteredList = filteredList.filter { it.region == regionFilter }
             if (formatFilter != null) filteredList = filteredList.filter { it.format == formatFilter }
 
             if (!metadataEnabled) {
-                // 【核心路径】 如果关闭元数据，则直接平铺显示，使用原始 title
+                // 如果没有开启元数据清洗，直接展示原始标题
                 return@map filteredList.map { 
                     BookshelfItem.SingleComic(it, null, it.title, null) 
                 }
             }
 
-            // 2. 初步按系列聚合
+            //\ 2 初步按系列聚合
             val tempGroups = mutableListOf<BookshelfItem>()
             val groupedMap = filteredList.groupBy { "${it.seriesName}|${it.format}|${it.year}|${it.remoteSeriesId}" }
 
@@ -184,7 +184,7 @@ class BookshelfViewModel(
                 }
             }
 
-            // 3. 统计名称重名，以便后续进行 Disambiguation 处理
+            //\ 3 统计名称重名，以便后续进行 Disambiguation 处理
             val nameCountMap = tempGroups.groupBy { 
                 when(it) {
                     is BookshelfItem.SingleComic -> it.comic.seriesName
@@ -192,7 +192,7 @@ class BookshelfViewModel(
                 }
             }.mapValues { it.value.size }
 
-            // 4. 重构结果并【预计算】所有 UI 展示所需标题与角标
+            //\ 4 重构结果并计算所有 UI 展示所需标题与角标
             tempGroups.map { item ->
                 when (item) {
                     is BookshelfItem.SingleComic -> {
@@ -200,16 +200,16 @@ class BookshelfViewModel(
                         val sName = comic.seriesName
                         val rawITitle = comic.issueTitle ?: comic.title
                         
-                        // 1. 清洗标题前缀
+                        //\ 1 清洗标题前缀
                         var cleanedITitle = rawITitle
                         formatsToStrip.forEach { if (cleanedITitle.startsWith(it, true)) cleanedITitle = cleanedITitle.substring(it.length).trim() }
                         
-                        // 2. 计算冲突辨识 (Disambiguation)
+                        //\ 2 计算冲突辨识 (Disambiguation)
                         val disambiguation = if (!sName.isNullOrBlank() && (nameCountMap[sName] ?: 0) > 1) {
                             listOfNotNull(comic.year, comic.format.name.takeIf { it != "UNKNOWN" }).joinToString(", ")
                         } else null
 
-                        // 3. 决定最终展示标题 (处理 Batman: Hush 这种系列名与标题重复的情况)
+                        //\ 3 决定最终展示标题 (处理 Batman: Hush 这种系列名与标题重复的情况)
                         val displayTitle = if (!sName.isNullOrBlank()) {
                             val sNorm = sName.lowercase().filter { it.isLetterOrDigit() }
                             val iNorm = cleanedITitle.lowercase().filter { it.isLetterOrDigit() }
@@ -242,8 +242,8 @@ class BookshelfViewModel(
     fun setFormatFilter(format: ComicFormat?) { savedStateHandle["formatFilter"] = format }
 
     fun addFolder(treeUri: Uri) {
-        // 关键：持久化 SAF 树 URI 的读取权限。
-        // 没有这一行，授权仅在当前会话有效，进程重启或切后台就会报 SecurityException。
+        // 关键：持久化 SAF 树 URI 的读取权限
+        // 没有这一行，授权仅在当前会话有效，进程重启或切后台就会报 SecurityException
         try {
             getApplication<Application>().contentResolver.takePersistableUriPermission(
                 treeUri,
@@ -273,12 +273,12 @@ class BookshelfViewModel(
         )
     }
 
-    // ============ 一键刷射承载序列流 ============
+    // 自动刮削相关状态
     private val _autoScrapeState = MutableStateFlow<AutoScrapeState>(AutoScrapeState.Idle)
     val autoScrapeState = _autoScrapeState.asStateFlow()
 
     /**
-     * 一键自动层层 SMART_FALLBACK 刷射并自动应用最佳第一条匹配结果，放山无人等待。
+     * 一键自动层层 SMART_FALLBACK 刷射并自动应用最佳第一条匹配结果，放山无人等待
      */
     fun autoScrape(comic: ComicEntity) {
         viewModelScope.launch {
@@ -313,7 +313,7 @@ class BookshelfViewModel(
     }
 
     /**
-     * 【云端同步核心】 从服务器抓取最新的漫画列表并同步至本地书架。
+     * 从网络服务拉取远端漫画列表并同步到本地数据库
      */
     fun syncRemoteLibrary() {
         viewModelScope.launch {
@@ -371,7 +371,7 @@ class BookshelfViewModel(
                         }
                     }
                 }
-                Log.d("BookshelfSync", "同步成功完成")
+                Log.d("BookshelfSync", "同步成功")
                 _autoScrapeState.value = AutoScrapeState.Done(-1L)
             } catch (e: Exception) {
                 Log.e("BookshelfSync", "同步失败: ${e.message}", e)
@@ -394,7 +394,7 @@ class BookshelfViewModel(
     }
 
     /**
-     * 【清场机制】 允许用户一键销毁所有云端索引，还一个纯净的本地库。
+     * 删除所有来源为远端的漫画记录
      */
 
     fun clearRemoteLibrary() {

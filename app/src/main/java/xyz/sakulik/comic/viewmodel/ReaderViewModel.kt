@@ -30,10 +30,9 @@ class ReaderViewModel(
     savedStateHandle: SavedStateHandle
 ) : AndroidViewModel(application) {
 
-    // 之前用 Hilt 给 backStackEntry 直接注入 ViewModel 时，toRoute 可以自动拆箱。
-    // 现在用了原生自定义包含 HashMap 的 SavedStateHandle，手动从 key-value 读出才是安全的对抗！
-    // 从 SavedStateHandle 中读取由 Navigation Compose 自动填充的参数。
-    // 注意：Navigation 2.8+ 默认会将 @Serializable 路由的所有参数存入 SavedStateHandle。
+    // 手动从 SavedStateHandle 中读取参数
+    // 从 SavedStateHandle 中读取由 Navigation Compose 自动填充的参数
+    //\ 注意：Navigation 28+ 默认会将 @Serializable 路由的所有参数存入 SavedStateHandle
     val matchedComicId: Long = savedStateHandle.get<Long>("comicId") ?: -1L
     val matchedInitialPage: Int = savedStateHandle.get<Int>("initialPage") ?: 0
 
@@ -70,11 +69,11 @@ class ReaderViewModel(
     private val comicCacheDir = File(application.cacheDir, "comic_cache")
     private val tempFile = File(application.cacheDir, "current_comic.tmp")
 
-    // 保存当前正在攻克的实体坐标
+    // 当前阅读的漫画实体
     var currentEntity: ComicEntity? = null
         private set
 
-    // 核心加载引擎句柄
+    // 页面加载引擎
     private var pageLoader: ComicPageLoader? = null
     private val loaderFactory = ComicPageLoaderFactory(application)
 
@@ -87,14 +86,13 @@ class ReaderViewModel(
         viewModelScope.launch {
             _state.value = ComicState.Loading
             try {
-                // 通过路由带过来的 ID 直接对接底层 Dao 反向查阅出这本神作的实体数据
+                // 根据 ID 查询漫画实体
                 val entity = dao.getComicById(matchedComicId)
-                    ?: throw IllegalArgumentException("图鉴编号 [$matchedComicId] 不存在于数据库的虚空之中！")
+                    ?: throw IllegalArgumentException("找不到 ID 为 [$matchedComicId] 的漫画记录")
                 
                 currentEntity = entity
                 val uri = Uri.parse(entity.uri)
-                // 优先使用数据库内専属存储的 extension 字段，
-                // 如果旧数据这个字段为空（元数据刷射后 title 已改名），则从 URI 路径縴耶山小追识
+                // 优先使用数据库中存储的扩展名，如果为空则尝试从路径解析
                 val ext = entity.extension.ifBlank {
                     uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase() ?: ""
                 }
@@ -102,12 +100,12 @@ class ReaderViewModel(
                 clearCache()
                 val context = getApplication<Application>()
                 
-                // 【核心变阵】通过工厂实例化符合数据源逻辑的加载引擎
+                // 使用工厂创建对应的加载引擎
                 val loader = loaderFactory.create(entity)
                 pageLoader = loader
                 
                 val pageCount = loader.getPageCount()
-                if (pageCount == 0) throw IllegalStateException("解析图集书目失败，引擎不支持或档案文件损坏！")
+                if (pageCount == 0) throw IllegalStateException("无法加载漫画页面，文件可能已损坏或暂不支持该格式")
 
                 _state.value = ComicState.Ready(pageCount, entity.title, ext, uri, loader)
             } catch (e: Exception) {
@@ -129,13 +127,13 @@ class ReaderViewModel(
         comicCacheDir.mkdirs()
         if (tempFile.exists()) tempFile.delete()
         // 通用清理：ReaderViewModel 的 clearCache 现在只关注 View 层级临时副本清理，
-        // 核心 Archive 生命周期现已移入 LocalArchivePageLoader.close()。
+        //\ 核心 Archive 生命周期现已移入 LocalArchivePageLoaderclose()
     }
 
     override fun onCleared() {
         super.onCleared()
         clearCache()
-        // 彻底切断底层物理连接与资源占用
+        // 关闭加载引擎并释放资源
         pageLoader?.close()
     }
 }

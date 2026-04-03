@@ -24,20 +24,20 @@ object ComicNameParser {
         var volumeNumber: Float? = null
         var year: String? = null
 
-        // ==== [核心优化] 预捕获年份信息 (如 2011, (2011), [2011]) ====
+        // 提取年份信息 (例如: 2011, (2011), [2011])
         val yearPattern = Regex("(?i)[\\(\\[]\\s*(\\d{4})\\s*[\\)\\]]|\\b(\\d{4})\\b")
         yearPattern.find(workingName)?.let { match ->
             year = match.groupValues.getOrNull(1)?.ifEmpty { match.groupValues.getOrNull(2) }
         }
 
-        // ==== 步骤一：针对日漫/欧美的分流特征极高密度雷达锁定 ====
+        // 步骤一：识别漫画类型特征（日漫/美漫）
         
         // 抓取日漫“话”特征
         val mangaIssuePattern = Regex("(?i)(第\\s*(\\d+(\\.\\d+)?)\\s*话|Ch\\.?\\s*(\\d+(\\.\\d+)?)|Ep\\s*(\\d+(\\.\\d+)?)|Extra\\s*(\\d+)?|番外(\\d+)?|附录)")
         // 抓取日漫“卷”特征，包括有的时候混淆成 Vol 
         val mangaVolPattern = Regex("(?i)(第\\s*(\\d+)\\s*卷|Vol\\.?\\s*(\\d+(\\.\\d+)?)|Book\\s*(\\d+)|Part\\s*(\\d+))")
         
-        // 【关键】捕捉极度细分的美漫复杂版号标识
+        // 捕获美漫特定的期号与版本标识
         val comicIssuePattern = Regex("(?i)(#\\s*(\\d+(\\.\\d+)?)|Issue\\s*(\\d+(\\.\\d+)?))")
         val hcPattern = Regex("(?i)(HC|Hardcover|Deluxe Edition|Library Edition)")
         val tpbPattern = Regex("(?i)(TPB|Trade Paperback)")
@@ -70,7 +70,7 @@ object ComicNameParser {
             }
         }
 
-        // 抓捕带 # 号或明确发行的期物
+        // 捕获带有 # 号或明确 Issue 标识的期号
         if (comicIssuePattern.containsMatchIn(workingName)) {
             val match = comicIssuePattern.find(workingName)
             val issueStr = match?.groupValues?.getOrNull(2)?.ifEmpty { match.groupValues.getOrNull(4) }
@@ -79,7 +79,7 @@ object ComicNameParser {
             format = ComicFormat.ISSUE
         }
 
-        // 抓捕高级精装与合订部头大包
+        // 捕获精装本(HC)或合订本(TPB/Omnibus)等格式
         if (hcPattern.containsMatchIn(workingName)) {
             region = ComicRegion.COMIC
             format = ComicFormat.HC
@@ -96,7 +96,7 @@ object ComicNameParser {
             region = ComicRegion.MANGA
         }
 
-        // ==== 步骤三：【兜底拾遗】针对无符号期号的暴力抓取 (如 Justice League 01) ====
+        // 步骤二：如果没有识别到明确的期号，尝试直接提取纯数字作为期号
         if (issueNumber == null) {
             val fallbackIssuePattern = Regex("\\b(\\d{1,3})\\b")
             // 找寻所有 matches，排除掉已经被识别为年份的那个数字
@@ -108,14 +108,14 @@ object ComicNameParser {
             }
         }
 
-        // ==== 步骤四：彻底粉碎切割标记物，剥离提取物 ====
+        // 步骤三：清洗文件名，提取系列标题
         
         workingName = workingName.replace(Regex("\\[.*?]"), "")
         workingName = workingName.replace(Regex("\\(.*?\\)"), "")
         workingName = workingName.replace(Regex("【.*?】"), "")
         workingName = workingName.replace(Regex("（.*?）"), "")
 
-        // 粉碎所有高威能捕获过的正则表达式雷达阵群残渣！防止污染 SerieName
+        // 清除已匹配的正则特征，避免干扰系列名称识别
         workingName = workingName.replace(mangaIssuePattern, "")
         workingName = workingName.replace(mangaVolPattern, "")
         workingName = workingName.replace(comicIssuePattern, "")
@@ -127,12 +127,12 @@ object ComicNameParser {
         workingName = workingName.replace(Regex("\\(\\s*\\d{4}\\s*\\)"), "")
         workingName = workingName.replace(Regex("\\d{4}"), "") // 纯年份
 
-        // 粉碎无聊的尾缀
+        // 清除常用状态或质量相关的后缀
         workingName = workingName.replace(Regex("(?i)(完结|连载中|全彩|扫图版|个人单扫|高清|1080p|RAW|Digital|C2C)"), "")
         workingName = workingName.replace(Regex("[\\-_~·.]"), " ")   // 变通符抹去，增加点号和中点
         workingName = workingName.replace(Regex("\\s+"), " ")     // 回车或连环空格归于一个
 
-        // 干瘪纯正的母序列名
+        // 最终提取出的系列名称
         val cleanSeriesName = workingName.trim().ifEmpty { originalFilename.substringBeforeLast('.') }
 
         return ParsedComicName(

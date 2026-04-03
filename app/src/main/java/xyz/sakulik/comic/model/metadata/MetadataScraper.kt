@@ -13,7 +13,7 @@ import java.io.FileOutputStream
 import java.util.UUID
 
 /**
- * 核心刮削调度引擎 —— 解耦自 ViewModel，允许在 Worker 中异步静默执行。
+ * 核心刮削调度引擎 —— 解耦自 ViewModel，允许在 Worker 中异步静默执行
  */
 object MetadataScraper {
     private val client = OkHttpClient()
@@ -25,7 +25,7 @@ object MetadataScraper {
         // [核心改进] 搜索词动态生成
         val precisionQuery = when {
             comic.format == ComicFormat.TPB && comic.volumeNumber != null -> {
-                // 如果是合订本，搜索词带上 Vol. 帮助命中合订本卷集
+                //\ 如果是合订本，搜索词带上 Vol 帮助命中合订本卷集
                 val volStr = if (comic.volumeNumber % 1f == 0f) comic.volumeNumber.toInt() else comic.volumeNumber
                 "${comic.seriesName} Vol. $volStr"
             }
@@ -50,19 +50,19 @@ object MetadataScraper {
                 val titleLower = result.title.lowercase()
                 val summaryLower = result.summary?.lowercase() ?: ""
                 
-                // 1. 标题基础分 (完全匹配或高度包含)
+                //\ 1 标题基础分 (完全匹配或高度包含)
                 if (result.title.equals(comic.seriesName, ignoreCase = true)) {
                     score += 100
                 } else if (titleLower.contains(comic.seriesName.lowercase())) {
                     score += 50
                 }
                 
-                // 2. 年份硬匹配 (2011 对上 2011) - +80 分
+                //\ 2 年份硬匹配 (2011 对上 2011) - +80 分
                 if (comic.year != null && result.year != null && result.year.contains(comic.year)) {
                     score += 80
                 }
                 
-                // 3. [关键] 格式对齐加权
+                //\ 3 [关键] 格式对齐加权
                 if (comic.format == ComicFormat.TPB || comic.format == ComicFormat.HC || comic.format == ComicFormat.OMNIBUS) {
                     // 如果文件是合订本，寻找标题带 Vol/TPB/HC 的结果
                     if (titleLower.contains("tpb") || titleLower.contains("trade paperback") || titleLower.contains("vol") || titleLower.contains("hc") || titleLower.contains("hardcover")) {
@@ -75,7 +75,7 @@ object MetadataScraper {
                     }
                 }
                 
-                // 4. 特殊特征词匹配 (如 New 52 / N52)
+                //\ 4 特殊特征词匹配 (如 New 52 / N52)
                 val isN52File = comic.title.contains("N52", ignoreCase = true) || comic.title.contains("New 52", ignoreCase = true)
                 val isN52Result = titleLower.contains("new 52") || summaryLower.contains("new 52")
                 if (isN52File && isN52Result) score += 50
@@ -162,7 +162,7 @@ object MetadataScraper {
                     response.body?.byteStream()?.use { stream ->
                         // [核心改进] 内存直通解码：不通过 ByteArray 缓冲，直接从网络流解码位图
                         // 注意：如果需要存盘，必须先存盘再解码，或者通过 BufferedInputStream 标记位重读
-                        // 这里我们采用先存盘再解码的策略，因为物理存盘是必要的。
+                        // 这里我们采用先存盘再解码的策略，因为物理存盘是必要的
                         val file = File(context.filesDir, "covers/${UUID.randomUUID()}.webp")
                         file.parentFile?.mkdirs()
                         

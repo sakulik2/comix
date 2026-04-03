@@ -55,8 +55,8 @@ object CoverExtractor {
     }
 
     private fun extractCbzCover(context: Context, uri: Uri, outPath: File): Boolean {
-        // [性能优化] 改为单次流式扫描：直接提取遇到的第一个合规图片文件。
-        // 对于 CBZ 来说，通常封面就是第一个文件，无需两次遍历。
+        // [性能优化] 改为单次流式扫描：直接提取遇到的第一个合规图片文件
+        // 对于 CBZ 来说，通常封面就是第一个文件，无需两次遍历
         try {
             context.contentResolver.openInputStream(uri)?.use { input ->
                 val zis = ZipInputStream(input)

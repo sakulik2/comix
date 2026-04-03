@@ -49,7 +49,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // 缓存目录，存解压出的图片
     private val comicCacheDir = File(application.cacheDir, "comic_cache")
-    // 用于转存 SAF URI 的压缩包，供 java.util.zip/junrar 调用
+    //\ 用于转存 SAF URI 的压缩包，供 java.utilzip/junrar 调用
     private val tempFile = File(application.cacheDir, "current_comic.tmp")
 
     init {
@@ -78,15 +78,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val fileName = comicTitle
                 val ext = fileName.substringAfterLast('.', "").lowercase()
 
-                // 【核心变阵】使用工厂实例化加载引擎
-                val entity = currentEntity ?: throw IllegalStateException("未指定任何漫画实体！")
+                // 使用加载器工厂创建对应的页面加载引擎
+                val entity = currentEntity ?: throw IllegalStateException("未指定任何漫画实体")
                 val loader = loaderFactory.create(entity)
                 pageLoader = loader
 
                 val pageCount = loader.getPageCount()
-                if (pageCount == 0) throw IllegalStateException("无法解析页面书目，该格式不被支持或文件已损坏！")
+                if (pageCount == 0) throw IllegalStateException("无法解析页面，文件可能已损坏或暂不支持该格式")
 
-                // 因为不需要实例化笨重的全量解压缩器，所以现在打开一本包含几百张图的文件，可以做到近乎零秒耗时。
+                // 由于采用流式加载与镜像机制，无需预先全量解压，极大提升了开启速度
                 _state.value = ComicState.Ready(pageCount, fileName, ext, uri, loader)
             } catch (e: Exception) {
                 e.printStackTrace()

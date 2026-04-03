@@ -10,7 +10,7 @@ import xyz.sakulik.comic.model.network.RetrofitClient
 import xyz.sakulik.comic.model.preferences.SettingsDataStore
 
 /**
- * 智能加载器工厂：根据 ComicEntity 的 source 字段分发适合的加载引擎。
+ * 漫画加载器工厂根据 ComicEntity 的 source 类型创建对应的加载引擎
  */
 class ComicPageLoaderFactory(private val context: Context) {
 
@@ -20,7 +20,7 @@ class ComicPageLoaderFactory(private val context: Context) {
         val current = _apiService
         if (current != null) return current
         
-        // 【动态域名适配】 优先从 DataStore 抓取用户自定义的服务器主地址
+        // 从 DataStore 中获取用户配置的 API 基础地址
         val baseUrlFromSettings = SettingsDataStore.getComicApiBaseUrlFlow(context).firstOrNull()
             ?: "https://comix.sakulik.xyz/"
 

@@ -11,12 +11,12 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
- * 原生 PDF 解析器，提供动态渲染。
+ * 原生 PDF 解析器，提供动态渲染
  */
 class PdfReader(private val pfd: ParcelFileDescriptor) : ComicBook, PdfEngine {
     private val pdfRenderer = PdfRenderer(pfd)
     
-    // PdfRenderer 限制同时只能 open 一页，加入 Mutex 互斥锁防止水平滚动时并发崩溃。
+    // PdfRenderer 限制同时只能 open 一页，加入 Mutex 互斥锁防止水平滚动时并发崩溃
     private val mutex = Mutex()
 
     override val pageCount: Int

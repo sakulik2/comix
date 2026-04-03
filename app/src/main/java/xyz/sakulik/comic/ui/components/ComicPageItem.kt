@@ -21,8 +21,8 @@ import xyz.sakulik.comic.model.loader.ComicPageLoader
 import xyz.sakulik.comic.ui.ZoomableImage
 
 /**
- * 带有“自适应显存保护屏障”的单页中转站。
- * 因为 ZoomableBox 会在此处发生作用，这里要起到承上启下的桥梁作用。
+ * 带有“自适应显存保护屏障”的单页中转站
+ * 因为 ZoomableBox 会在此处发生作用，这里要起到承上启下的桥梁作用
  */
 @Composable
 fun ComicPageItem(
@@ -45,7 +45,7 @@ fun ComicPageItem(
         }
     }
 
-    // 当且仅当这一页面得到了分配给它的物理尺寸边界时，才呼叫深源层引擎释放出匹配的数据流。
+    // 当且仅当这一页面得到了分配给它的物理尺寸边界时，才呼叫深源层引擎释放出匹配的数据流
     LaunchedEffect(containerSize, pageIndex) {
         if (containerSize.first > 0 && containerSize.second > 0 && pageData == null) {
             pageData = loader.getPageData(

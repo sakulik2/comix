@@ -17,10 +17,10 @@ import xyz.sakulik.comic.model.scanner.CoverExtractor
 import java.io.File
 
 /**
- * 【跨进程装甲扫描舰】—— WorkManager 后台任务节点 (原生态，免除一切花里胡哨且失效的插件注入)
- * 
- * 架构意图：
- * 绝不能在 ViewModel 甚至协程中解析以 GB 计数的图片包！
+ * WorkManager 后台扫描任务
+ *
+ * 扫描指定文件夹（或全库）中的漫画档案文件，并将结果同步到数据库
+ * 对每个新入库的书目自动触发元数据扫描
  */
 class LibraryScanWorker(
     context: Context,
@@ -36,7 +36,7 @@ class LibraryScanWorker(
         val comicDao = AppDatabase.getDatabase(applicationContext).comicDao()
         val contentResolver = applicationContext.contentResolver
 
-        // 1. 获取要扫描的范围。如果有传入指定的 URI，则只扫这个；如果没有，则扫所有历史授权挂载点 (全量自动化)
+        //\ 1 获取要扫描的范围如果有传入指定的 URI，则只扫这个；如果没有，则扫所有历史授权挂载点 (全量自动化)
         val uriString = inputData.getString(KEY_URI)
         val targetUris = if (uriString != null) {
             listOf(Uri.parse(uriString))
@@ -45,7 +45,7 @@ class LibraryScanWorker(
         }
 
         if (targetUris.isEmpty()) {
-            setProgress(workDataOf(PROGRESS_MSG to "未找到授权扫描的目录，请先添加挂载点。"))
+            setProgress(workDataOf(PROGRESS_MSG to "未找到授权扫描的目录，请先添加挂载点"))
             return@withContext Result.success()
         }
 
@@ -67,7 +67,7 @@ class LibraryScanWorker(
 
                 setProgress(workDataOf(PROGRESS_MSG to "探测中 ($foundCount) : ${file.name}"))
 
-                // [性能锁与自愈矩阵] 检查是否已入库，或其封面是否被旧版机制留在 cacheDir 遭系统清场
+                // 检查是否已入库，或其封面是否被旧版机制留在 cacheDir 遭系统清场
                 val existing = comicDao.getComicByUri(fileUriStr)
                 // 触发条件：新书，或者是老书但曾有封面物理文件却离奇蒸发了
                 val needExtract = existing == null || (existing.coverCachePath != null && !File(existing.coverCachePath).exists())
@@ -100,12 +100,12 @@ class LibraryScanWorker(
                             location = fileUriStr
                         )
                         val insertedId = comicDao.insert(entity)
-                        // 【自愈触发：入库即刮削】
+                        // 入库后触发元数据小聽
                         if (insertedId != -1L) {
                             xyz.sakulik.comic.model.metadata.MetadataScraper.autoScrape(applicationContext, entity.copy(id = insertedId))
                         }
                     } else {
-                        // [无损抢救] 如果书本早就在库里，只是封面被系统吞了，那么只换封面，绝不干扰辛苦留下的阅读进度！
+                        // 如果文件已在库中但封面缺失，仅更新封面路径，保留阅读进度
                         comicDao.update(existing.copy(coverCachePath = newCoverPath))
                     }
                 }
@@ -140,7 +140,7 @@ class LibraryScanWorker(
         }
 
         val deleteMsg = if(deletedCount > 0) "，移除了 $deletedCount 本死链" else ""
-        setProgress(workDataOf(PROGRESS_MSG to "同步结束！共校验 $foundCount 本图鉴$deleteMsg。"))
+        setProgress(workDataOf(PROGRESS_MSG to "同步结束！共校验 $foundCount 本图鉴$deleteMsg"))
         return@withContext Result.success()
     }
 

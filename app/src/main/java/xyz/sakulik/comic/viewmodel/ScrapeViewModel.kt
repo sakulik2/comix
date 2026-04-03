@@ -42,14 +42,14 @@ class ScrapeViewModel(
     private val _selectedStrategy = MutableStateFlow(ScrapeStrategy.SMART_FALLBACK)
     val selectedStrategy = _selectedStrategy.asStateFlow()
 
-    // [核心重构] 多步状态管理
+    // 多步状态管理
     private val _currentStep = MutableStateFlow(ScrapeStep.VOLUME)
     val currentStep = _currentStep.asStateFlow()
 
     private val _selectedVolume = MutableStateFlow<ScrapedComicInfo?>(null)
     val selectedVolume = _selectedVolume.asStateFlow()
 
-    // 暂存正主实体，以便选择后能够将其归档同步到数据库
+    // 缓存目标漫画实体，用于后续更新数据库
     private var targetComic: ComicEntity? = null
 
     fun loadAndInit(comicId: Long) {
@@ -95,9 +95,7 @@ class ScrapeViewModel(
         }
     }
 
-    /**
-     * [下钻行动] 选择了系列后，立刻拉取该系列下的全部分期
-     */
+     // * 选择了系列后，立刻拉取该系列下的所有分期
     fun selectVolume(volume: ScrapedComicInfo) {
         val volumeId = volume.remoteId ?: return
         viewModelScope.launch {
@@ -117,10 +115,10 @@ class ScrapeViewModel(
     }
 
     /**
-     * 合并网侧提取出来的新数据，顺便尝试将远端 URL 图片强刷到本地覆盖做封皮。
+     * 合并网侧提取出来的新数据，顺便尝试将远端 URL 图片强刷到本地覆盖做封皮
      */
     /**
-     * 【兼容性适配器】供旧版 BottomSheet 直接传递实体调用
+     * 将解析出的元数据应用到本地数据库，并下载封面图
      */
     fun applyMetadata(comic: ComicEntity, info: ScrapedComicInfo, onComplete: () -> Unit) {
         targetComic = comic
@@ -150,7 +148,7 @@ class ScrapeViewModel(
                 } catch (e: Exception) { e.printStackTrace() }
             }
 
-            // [组合逻辑] 如果已经有了 Series (Volume)，则使用 Series 标题，而将 Issue 标题作为副标题
+            // 合并逻辑：如果已经有了系列 (Volume)，则使用其标题
             val seriesName = currentVol?.title ?: info.title
             val issueTitle = if (currentVol != null) info.issueTitle else null
             val issueNumber = info.issueNumber ?: comic.issueNumber

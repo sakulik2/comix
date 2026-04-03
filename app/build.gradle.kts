@@ -49,8 +49,8 @@ android {
     }
 }
 
-// 直接遍历所有 Kotlin 编译任务，强制注入 JVM 目标。
-// 这样即使 android { ... } 闭包不识别 kotlinOptions，这里也能生效。
+// 直接遍历所有 Kotlin 编译任务，强制注入 JVM 目标
+// 这样即使 android { ... } 闭包不识别 kotlinOptions，这里也能生效
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)

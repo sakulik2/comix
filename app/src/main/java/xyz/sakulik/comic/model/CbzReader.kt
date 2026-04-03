@@ -33,7 +33,7 @@ class CbzReader(
         val entry = entries[index]
         val outFile = File(cacheDir, "cbz_page_$index.img")
 
-        // 简易缓存策略，如果文件不存在则提取。
+        // 简易缓存策略，如果文件不存在则提取
         // （为防止磁盘占用过大，应当由外部 ViewModel 负责清理过去的提取项）
         if (!outFile.exists()) {
             zipFile.getInputStream(entry).use { input ->

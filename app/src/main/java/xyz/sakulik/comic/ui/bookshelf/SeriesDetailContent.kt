@@ -32,7 +32,7 @@ fun SeriesDetailContent(
         verticalArrangement = Arrangement.spacedBy(16.dp),
         modifier = modifier.fillMaxSize()
     ) {
-        // 1. 系列总览 Header
+        //\ 1 系列总览 Header
         item(span = { GridItemSpan(maxLineSpan) }) {
             SeriesHeader(group = series)
         }

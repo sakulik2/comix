@@ -31,7 +31,8 @@ import xyz.sakulik.comic.ui.components.WebtoonReader
 import xyz.sakulik.comic.viewmodel.ReaderMode
 
 /**
- * 【重工特化 v2.0】Edge-to-Edge 真·全屏沉浸与多维阅读引擎。
+ * 漫画阅读器主界面
+ * 支持全屏沉浸模式与多种阅读模式（单页、双页、长图）
  */
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -57,7 +58,7 @@ fun ReaderScreen(
     val window = (context as? Activity)?.window
     val coroutineScope = rememberCoroutineScope()
 
-    // 【内存护航】屏幕常亮设置
+    // 设置屏幕常亮，防止阅读时自动关闭屏幕
     DisposableEffect(Unit) {
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
@@ -68,7 +69,7 @@ fun ReaderScreen(
     val config = androidx.compose.ui.platform.LocalConfiguration.current
     val isLandscape = config.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
-    // 【智能判定】如果处于横屏且当前不是 Webtoon 模式，自动切换到双页逻辑（如果用户没手动改的话）
+    // 横屏模式下，如果当前是翻页模式，默认采用双页逻辑以利用屏幕宽度
     // 为了不干扰用户手动选择，这里仅作逻辑映射建议
     val effectiveReaderMode = if (isLandscape && readerMode == ReaderMode.PAGER) {
         ReaderMode.DUAL_PAGE
@@ -152,9 +153,9 @@ fun ReaderScreen(
                             val leftIdx = page * 2
                             val rightIdx = page * 2 + 1
                             
-                            // RTL 逻辑：物理上的左边应该是逻辑上的后一页，右边是前一页。
-                            // 但 Compose HorizontalPager 已经反转了 Row 的顺序（通过 layoutDirection）。
-                            // 所以这里依然按顺序布局即可，Pager 会替我们排版。
+                            // RTL 逻辑：物理上的左边应该是逻辑上的后一页，右边是前一页
+                            // 但 Compose HorizontalPager 已经反转了 Row 的顺序（通过 layoutDirection）
+                            // 所以这里依然按顺序布局即可，Pager 会替我们排版
                             
                             Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                                 ComicPageItem(

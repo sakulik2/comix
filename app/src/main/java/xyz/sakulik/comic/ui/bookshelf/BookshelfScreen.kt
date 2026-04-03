@@ -393,7 +393,7 @@ fun BookshelfScreen(
                         onValueChange = { inputUrl = it },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        placeholder = { Text("http://api...") },
+                        placeholder = { Text("http://api..") },
                         leadingIcon = { Icon(painterResource(R.drawable.ic_link), contentDescription = null) }
                     )
                 }

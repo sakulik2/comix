@@ -61,15 +61,15 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * 【类型安全路由大满贯】
- * 利用 Kotlin Serialization 2.8+ 强绑定参数传递
+ * Compose 导航宿主，定义应用所有页面的路由结构
+ * 使用 Navigation Compose 2.8+ 的强类型路由（@Serializable 数据类）
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun ComicAppNavHost() {
-    // 【稳定方案 v2】将 BookshelfViewModel 提升至 Activity 作用域，
-    // 使用 AbstractSavedStateViewModelFactory 注入 SavedStateHandle，
-    // 彻底避免 getBackStackEntry() 在进程恢复时抛出崩溃。
+    // 将 BookshelfViewModel 提升至 Activity 作用域，使其在所有路由间共享同一实例
+    // 使用 AbstractSavedStateViewModelFactory 确保 SavedStateHandle 被正确注入，
+    // 避免通过 getBackStackEntry() 取 ViewModel 在进程恢复时可能触发的 IllegalArgumentException
     val activity = androidx.compose.ui.platform.LocalContext.current as ComponentActivity
     val application = activity.application
     val bookshelfViewModel: BookshelfViewModel = viewModel(
@@ -172,7 +172,7 @@ fun ComicAppNavHost() {
         }
 
 
-        // ========== [页面 3: 极致化底层沉浸阅读器] ==========
+        // 阅读器页面
         composable<ReaderRoute> { backStackEntry ->
             val route = backStackEntry.toRoute<ReaderRoute>()
             // 使用 NavBackStackEntry 自身的 SavedStateHandle 构造 ViewModel

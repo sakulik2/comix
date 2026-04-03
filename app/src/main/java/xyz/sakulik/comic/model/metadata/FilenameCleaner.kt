@@ -1,7 +1,7 @@
 package xyz.sakulik.comic.model.metadata
 
 /**
- * 专门用于将杂乱无章的本地扫描文件名清洗成高质量 API 查询关键字的单例工具
+ * 用于清理漫画文件名的实用工具类将文件名转换为更适合 API 查询的关键词
  */
 object FilenameCleaner {
     
@@ -14,13 +14,13 @@ object FilenameCleaner {
         // 先去掉各类漫画常见后缀扩展名
         var cleaned = originalFilename.replace(Regex("\\.(cbz|cbr|pdf|zip|rar)$", RegexOption.IGNORE_CASE), "")
         
-        // 步骤一：移除方括号、圆括号及其内部所有内容。通常是 [汉化组] 或者 (分辨率)
+        // 步骤一：移除方括号、圆括号及其内部所有内容通常是 [汉化组] 或者 (分辨率)
         cleaned = cleaned.replace(Regex("\\[.*?]"), "")
         cleaned = cleaned.replace(Regex("\\(.*?\\)"), "")
         cleaned = cleaned.replace(Regex("【.*?】"), "") // 中文特殊括号
         cleaned = cleaned.replace(Regex("（.*?）"), "") // 中文特殊圆括号
         
-        // 步骤二：移除 "Vol.01", "v1", "Chapter 2", "ch.12" 以及类似字眼及其后的数字
+        //\ 步骤二：移除 "Vol.01", "v1", "Chapter 2", "ch12" 以及类似字眼及其后的数字
         cleaned = cleaned.replace(Regex("(?i)(vol\\.|v|chapter|ch\\.)\\s*\\d+", RegexOption.IGNORE_CASE), "")
         
         // 步骤三：移除常见冗余中文特征字词如 "完结", "短篇", "单行本"

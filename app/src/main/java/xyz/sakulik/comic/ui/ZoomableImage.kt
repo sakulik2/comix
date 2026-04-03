@@ -25,8 +25,8 @@ import androidx.compose.ui.layout.ContentScale
 import kotlinx.coroutines.launch
 
 /**
- * 支持单指穿梭、以及突破天际双指手势缩放的多层触控拦截包裹视图组件。
- * 升级版：支持双击平滑动画。
+ * 支持缩放与平移的图片组件
+ * 兼容手势缩放与双击缩放动画
  */
 @Composable
 fun ZoomableImage(
@@ -35,7 +35,7 @@ fun ZoomableImage(
     onScaleChanged: (Float) -> Unit = {}, // 暴露一个接口方便更高层的主翻页层截断滑动指令
     onTap: () -> Unit = {} // 点击回调，用于切换沉浸模式
 ) {
-    // 【缩放与移动的灵魂】使用 Animatable 实现丝滑动画与即时手势同步
+    // 使用 Animatable 实现手势状态的平滑切换与动画同步
     val scale = remember { Animatable(1f) }
     val offset = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
     val coroutineScope = rememberCoroutineScope()
@@ -43,7 +43,7 @@ fun ZoomableImage(
     Box(
         modifier = modifier
             .fillMaxSize()
-            // 1. 点击流控：负责单击切换 UI，双击【动画】缩放
+            // 处理点击事件：单击切换 UI，双击触发缩放动画
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = { onTap() },
@@ -54,7 +54,7 @@ fun ZoomableImage(
                                 launch { scale.animateTo(1f, spring()) }
                                 launch { offset.animateTo(Offset.Zero, spring()) }
                             } else {
-                                // 放大到 2.5x 动画
+                                //\ 放大到 25x 动画
                                 launch { scale.animateTo(2.5f, spring()) }
                                 // 计算点击中心平移（可选增强：暂时居中或保持原位）
                             }
@@ -62,7 +62,7 @@ fun ZoomableImage(
                     }
                 )
             }
-            // 2. 变换流控：负责双指捏合与已放大的平移 (使用 snapTo 保持物理同步)
+            // 处理变换手势：负责双指捏合缩放与平移
             .pointerInput(Unit) {
                 awaitEachGesture {
                     var rotation = 0f
@@ -108,10 +108,10 @@ fun ZoomableImage(
                                     val maxOffsetX = (size.width * (scale.value - 1)) / 2
                                     val maxOffsetY = (size.height * (scale.value - 1)) / 2
                                     
-                                    // 【核心优化：边缘穿透】
-                                    // 判断当前是否在左右边界上。
+                                    // 边缘检测优化：
+                                    // 判断当前是否在左右边界上
                                     // 如果用户尝试往左划(pan < 0)且已经在右边界(-max)上，或者尝试往右划且已经在左边界(max)上，
-                                    // 则不消费这个事件，让外层 Pager 拿到它实现翻页。
+                                    // 则不消费这个事件，让外层 Pager 拿到它实现翻页
                                     val isAtLeftEdge = offset.value.x >= maxOffsetX - 0.5f 
                                     val isAtRightEdge = offset.value.x <= -maxOffsetX + 0.5f
                                     val isPanningToNext = panChange.x < 0
