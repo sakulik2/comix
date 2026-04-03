@@ -23,14 +23,16 @@
 -keep class xyz.sakulik.comic.model.** { *; }
 
 # --- Kotlin Serialization (类型安全导航) ---
--keepattributes *Annotation*, InnerClasses
+-keepattributes *Annotation*, InnerClasses, Signature
 -keepclassmembers class ** {
     *** Companion;
 }
 -keepclasseswithmembers class ** {
     kotlinx.serialization.KSerializer serializer(...);
 }
+# 显式保持所有路由类及其成员，防止混淆导致 restored ID 不匹配
 -keep class xyz.sakulik.comic.navigation.** { *; }
+-keepclassmembers class xyz.sakulik.comic.navigation.** { *; }
 
 # --- Coil (图片加载) ---
 -keep class coil.** { *; }
