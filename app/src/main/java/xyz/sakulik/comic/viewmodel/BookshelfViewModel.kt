@@ -304,6 +304,40 @@ class BookshelfViewModel(
         }
     }
 
+    /**
+     * 物理级删除：从数据库移除，并尝试从本地磁盘/存储中永久删除文件
+     */
+    fun deleteComicAndFile(comic: ComicEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (comic.source == ComicSource.LOCAL) {
+                try {
+                    val uri = Uri.parse(comic.location)
+                    if (uri.scheme == "content") {
+                        // 使用 DocumentFile 处理 SAF（存储访问框架）删除逻辑
+                        val doc = androidx.documentfile.provider.DocumentFile.fromSingleUri(getApplication(), uri)
+                        if (doc?.exists() == true) {
+                            val success = doc.delete()
+                            if (!success) {
+                                Log.e("BookshelfOps", "Physical delete failed for SAF Uri: $uri")
+                                // 即使物理删除失败，也可能需要向 UI 反馈，暂先记录日志
+                            }
+                        }
+                    } else if (uri.scheme == "file" || comic.location.startsWith("/")) {
+                        val path = uri.path ?: comic.location
+                        val file = File(path)
+                        if (file.exists()) {
+                            file.delete()
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("BookshelfOps", "Error deleting physical file: ${e.message}", e)
+                }
+            }
+            // 无论物理文件删除是否成功，都从数据库中剥离索引，防止重复加载死循环
+            dao.delete(comic)
+        }
+    }
+
     fun clearScrapeState() { _autoScrapeState.value = AutoScrapeState.Idle }
 
     fun saveCloudApi(url: String) {

@@ -1,6 +1,5 @@
 package xyz.sakulik.comic.ui.bookshelf
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
@@ -8,8 +7,7 @@ import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,7 +21,6 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import xyz.sakulik.comic.model.db.ComicEntity
 import xyz.sakulik.comic.model.db.ComicRegion
-import xyz.sakulik.comic.model.db.ComicFormat
 import xyz.sakulik.comic.model.db.ComicSource
 import xyz.sakulik.comic.viewmodel.AutoScrapeState
 import xyz.sakulik.comic.viewmodel.BookshelfItem
@@ -31,9 +28,8 @@ import xyz.sakulik.comic.viewmodel.BookshelfViewModel
 import xyz.sakulik.comic.viewmodel.SeriesGroupData
 import xyz.sakulik.comic.viewmodel.SortOrder
 import java.io.File
-import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateContentSize
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.res.painterResource
 import xyz.sakulik.comic.R
@@ -59,6 +55,7 @@ fun BookshelfScreen(
     var showAddMenu by remember { mutableStateOf(false) }
     var showApiDialog by remember { mutableStateOf(false) }
     var contextComic by remember { mutableStateOf<ComicEntity?>(null) }
+    var showDeleteOptions by remember { mutableStateOf(false) }
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -267,7 +264,10 @@ fun BookshelfScreen(
 
     contextComic?.let { comic ->
         ModalBottomSheet(
-            onDismissRequest = { contextComic = null },
+            onDismissRequest = { 
+                contextComic = null 
+                showDeleteOptions = false
+            },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
@@ -279,6 +279,15 @@ fun BookshelfScreen(
                     .padding(horizontal = 16.dp)
                     .navigationBarsPadding()
             ) {
+                // [优化：平滑颜色过渡]
+                val dangerZoneColor by androidx.compose.animation.animateColorAsState(
+                    targetValue = if (showDeleteOptions) 
+                        MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f) 
+                    else 
+                        MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.1f),
+                    label = "DangerZoneColor"
+                )
+                
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -355,23 +364,87 @@ fun BookshelfScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                // [优化：优雅的折叠式危险区]
                 Surface(
-                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.1f),
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    color = dangerZoneColor,
+                    shape = RoundedCornerShape(24.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .animateContentSize(
+                            animationSpec = androidx.compose.animation.core.spring(
+                                dampingRatio = androidx.compose.animation.core.Spring.DampingRatioLowBouncy,
+                                stiffness = androidx.compose.animation.core.Spring.StiffnessLow
+                            )
+                        )
                 ) {
-                    ListItem(
-                        headlineContent = { Text("从书架移除", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error) },
-                        supportingContent = { Text("仅清理记录，不会删除您的物理漫画文件", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onErrorContainer) },
-                        leadingContent = {
-                            Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
-                        },
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .clickable { viewModel.deleteComic(comic); contextComic = null }
-                    )
+                    Column {
+                        ListItem(
+                            headlineContent = { Text(if (showDeleteOptions) "确认删除操作" else "移除与删除", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error) },
+                            supportingContent = { Text(if (showDeleteOptions) "请谨慎选择以下操作" else "点击展开高级删除选项", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onErrorContainer) },
+                            leadingContent = {
+                                Icon(
+                                    if (showDeleteOptions) Icons.Default.KeyboardArrowDown else Icons.Default.Delete, 
+                                    contentDescription = null, 
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            },
+                            trailingContent = {
+                                if (!showDeleteOptions) {
+                                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
+                                }
+                            },
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(20.dp))
+                                .clickable { showDeleteOptions = !showDeleteOptions }
+                        )
+
+                        // [优化：移除冗余的 AnimatedVisibility，改用简单 if 配合 animateContentSize]
+                        if (showDeleteOptions) {
+                            Column(
+                                modifier = Modifier
+                                    .padding(horizontal = 12.dp)
+                                    .padding(bottom = 12.dp)
+                            ) {
+                                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error.copy(alpha = 0.2f))
+                                
+                                // 选项 1: 仅从书架移除
+                                ListItem(
+                                    headlineContent = { Text("仅从书架移除", style = MaterialTheme.typography.bodyMedium) },
+                                    supportingContent = { Text("保留本地文件，仅清除索引", style = MaterialTheme.typography.labelSmall) },
+                                    leadingContent = { Icon(Icons.Default.Book, null, modifier = Modifier.size(18.dp)) },
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable { 
+                                            viewModel.deleteComic(comic)
+                                            contextComic = null
+                                            showDeleteOptions = false
+                                        }
+                                )
+
+                                // 选项 2: 彻底删除文件 (仅对本地文件有效)
+                                if (comic.source == ComicSource.LOCAL) {
+                                    ListItem(
+                                        headlineContent = { Text("彻底删除物理文件", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) },
+                                        supportingContent = { Text("警告：将从磁盘永久删除，不可恢复", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onErrorContainer) },
+                                        leadingContent = { Icon(Icons.Default.Warning, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.error) },
+                                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .clickable { 
+                                                viewModel.deleteComicAndFile(comic)
+                                                contextComic = null
+                                                showDeleteOptions = false
+                                            }
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Spacer(Modifier.height(32.dp))

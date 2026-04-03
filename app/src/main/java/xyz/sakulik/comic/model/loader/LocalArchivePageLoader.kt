@@ -14,6 +14,14 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.ZipInputStream
+import android.os.ParcelFileDescriptor
+import android.system.Os
+import android.system.OsConstants
+import java.io.FileDescriptor
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.channels.FileChannel
+import kotlin.coroutines.coroutineContext
 
 /**
  * 本地档案页面加载器，支持 .cbr, .cbz, .pdf 格式
@@ -59,6 +67,85 @@ class LocalArchivePageLoader(
     // Bitmap 复用池，减少堆分配压力
     private val bitmapPool = java.util.Collections.synchronizedList(mutableListOf<Bitmap>())
 
+    private var activePfd: ParcelFileDescriptor? = null
+    private var activeChannel: FileChannel? = null
+    private var activeRarArchive: Archive? = null
+    private var activeZipFile: java.util.zip.ZipFile? = null
+    private var activeZipIndexer: ZipFastIndexer? = null
+    private var activeSortedHeaders: List<Any>? = null
+
+    private suspend fun ensureActiveSession(): Boolean = withContext(Dispatchers.IO) {
+        if (activeChannel != null && (activeRarArchive != null || activeZipIndexer != null)) return@withContext true
+        try {
+            val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return@withContext false
+            activePfd = pfd
+            val channel = java.io.FileInputStream(pfd.fileDescriptor).channel
+            activeChannel = channel
+            
+            android.util.Log.i("ArchiveLoader", "Session init [Turbo-Random]: $extension (${channel.size()} bytes)")
+            
+            when (extension.lowercase()) {
+                "cbz", "zip" -> {
+                    // [Turbo-Random] Primary Page Indexer (Manual NIO)
+                    // We prioritize the manual indexer because it's more stable than /proc/self/fd/ZipFile
+                    val indexer = ZipFastIndexer(channel)
+                    activeZipIndexer = indexer
+                    activeSortedHeaders = indexer.getEntryNames().filter { isImage(it) }.sorted()
+                    
+                    // Optional: Still try ZipFile as a high-perf C++ speed alternate
+                    val pfdFile = java.io.File("/proc/self/fd/${pfd.fd}")
+                    try {
+                        if (pfdFile.exists()) {
+                            activeZipFile = java.util.zip.ZipFile(pfdFile)
+                        }
+                    } catch (e: Exception) { /* Silently fall back to indexer */ }
+                }
+                "cbr", "rar" -> {
+                    // [Turbo-Random] Use official SeekableReadOnlyByteChannel to bridge NIO FileChannel to Junrar
+                    val nioChannel = RarNioChannel(channel)
+                    val volumeManager = RarVolumeManager(nioChannel)
+                    val archive = Archive(volumeManager, null, null)
+                    activeRarArchive = archive
+                    activeSortedHeaders = archive.getFileHeaders()
+                        .filter { !it.isDirectory && isImage(it.fileName ?: "") }
+                        .sortedBy { it.fileName }
+                    android.util.Log.i("ArchiveLoader", "RAR NIO Index success: ${activeSortedHeaders?.size} entries.")
+                }
+            }
+            
+            val counts = activeSortedHeaders?.size ?: 0
+            if (counts == 0) {
+                android.util.Log.e("ArchiveLoader", "Session established but NO image entries found!")
+            } else {
+                android.util.Log.i("ArchiveLoader", "NIO Index success: found $counts entries.")
+            }
+            true
+        } catch (e: Exception) {
+            android.util.Log.e("ArchiveLoader", "Session failed [CRITICAL]: ${e.message}", e)
+            closeActiveSession()
+            false
+        }
+    }
+
+    private fun closeActiveSession() {
+        try {
+            activeRarArchive?.close()
+            activeZipFile?.close()
+            activePfd?.close()
+            activeChannel?.close()
+        } catch (e: Exception) { /* ignore */ }
+        activeRarArchive = null
+        activeZipFile = null
+        activeZipIndexer = null
+        activeChannel = null
+        activePfd = null
+        activeSortedHeaders = null
+    }
+
+    protected fun finalize() {
+        closeActiveSession()
+    }
+
     private fun obtainBitmap(w: Int, h: Int, config: Bitmap.Config): Bitmap {
         val requiredBytes = w * h * (if (config == Bitmap.Config.RGB_565) 2 else 4)
         synchronized(bitmapPool) {
@@ -98,7 +185,6 @@ class LocalArchivePageLoader(
             return sessionMirror
         }
         
-        // mirrorMutex 独立于 archiveMutex，避免镜像打制阵封 getPageData 的首屏加载路径
         return withContext(Dispatchers.IO) {
             mirrorMutex.withLock {
                 if (isMirrorReady || isStreamingOnly) return@withLock sessionMirror
@@ -107,25 +193,17 @@ class LocalArchivePageLoader(
                     val fileSize = getUriSize(uri)
                     val available = getAvailableSpace()
                     
-                    // [策略引擎]：
-                    // 1. 如果文件 > 2GB，强制转入流式模式（防 OOM 且防磁盘爆仓）
-                    // 2. 如果剩余磁盘空间不足以支撑文件大小 + 500MB 安全缓冲，强制转入流式模式
                     if (fileSize > 2L * 1024 * 1024 * 1024 || available < fileSize + 500 * 1024 * 1024) {
                         isStreamingOnly = true
-                        android.util.Log.i("ArchiveLoader", "Storage pressure or huge file (${fileSize} bytes), skipping mirror.")
+                        android.util.Log.i("ArchiveLoader", "Storage pressure or huge file ($fileSize bytes), skipping mirror.")
                         return@withLock null
                     }
 
                     val start = System.currentTimeMillis()
                     val tempFile = File(sessionDir, "mirror_${System.currentTimeMillis()}.tmp")
                     context.contentResolver.openInputStream(uri)?.use { input ->
-                        FileOutputStream(tempFile).use { out ->
-                            val buffer = ByteArray(262144) 
-                            var bytes = input.read(buffer)
-                            while (bytes >= 0) {
-                                out.write(buffer, 0, bytes)
-                                bytes = input.read(buffer)
-                            }
+                        tempFile.outputStream().use { out ->
+                            input.copyTo(out)
                         }
                     }
                     sessionMirror = tempFile
@@ -167,9 +245,22 @@ class LocalArchivePageLoader(
                 
                 val archiveFile = ensureSessionMirror()
                 
-                // [优化路径]：如果镜像尚未就绪（或因 2GB 限制、空间不足跳过），采用流式扫描元数据
+                // [高级核心优化]：SELinux 兼容的持久会话随机访问 (O(1))
                 if (archiveFile == null) {
-                    android.util.Log.i("ArchiveLoader", "Scanning metadata via stream...")
+                    val count = if (ensureActiveSession()) {
+                        val size = activeSortedHeaders?.size ?: 0
+                        if (size > 0) {
+                            android.util.Log.i("ArchiveLoader", "NIO Session success, entries: $size")
+                            cachedEntries = activeSortedHeaders?.map { 
+                                if (it is String) it else (it as com.github.junrar.rarfile.FileHeader).fileName 
+                            }
+                            size
+                        } else null
+                    } else null
+                    
+                    if (count != null) return@withLock count
+
+                    android.util.Log.i("ArchiveLoader", "Scanning metadata via sequential stream (Slow Path)...")
                     context.contentResolver.openInputStream(uri)?.use { input ->
                         val names = mutableListOf<String>()
                         when (extension.lowercase()) {
@@ -185,7 +276,7 @@ class LocalArchivePageLoader(
                             }
                             "cbr", "rar" -> {
                                 Archive(input).use { archive ->
-                                    archive.fileHeaders.forEach { header ->
+                                    archive.getFileHeaders().forEach { header ->
                                         if (!header.isDirectory && isImage(header.fileName ?: "")) names.add(header.fileName)
                                     }
                                 }
@@ -202,33 +293,25 @@ class LocalArchivePageLoader(
                     return@withLock pdfRenderer?.pageCount ?: 0
                 }
 
+                val names = mutableListOf<String>()
                 when (extension.lowercase()) {
                     "cbz", "zip" -> {
-                        val names = mutableListOf<String>()
                         java.util.zip.ZipFile(archiveFile).use { zipFile ->
                             zipFile.entries().asSequence().forEach { entry ->
-                                if (!entry.isDirectory && isImage(entry.name)) {
-                                    names.add(entry.name)
-                                }
+                                if (!entry.isDirectory && isImage(entry.name)) names.add(entry.name)
                             }
                         }
-                        cachedEntries = names.sorted()
-                        names.size
                     }
                     "cbr", "rar" -> {
-                        val names = mutableListOf<String>()
                         Archive(archiveFile).use { archive ->
-                            archive.fileHeaders.forEach { header ->
-                                if (!header.isDirectory && isImage(header.fileName ?: "")) {
-                                    names.add(header.fileName)
-                                }
+                            archive.getFileHeaders().forEach { header ->
+                                if (!header.isDirectory && isImage(header.fileName ?: "")) names.add(header.fileName)
                             }
                         }
-                        cachedEntries = names.sorted()
-                        names.size
                     }
-                    else -> 0
                 }
+                cachedEntries = names.sorted()
+                return@withLock names.size
             } catch (e: Exception) {
                 e.printStackTrace()
                 0
@@ -237,20 +320,90 @@ class LocalArchivePageLoader(
     }
 
     override suspend fun getPageData(pageIndex: Int, width: Int, height: Int): Any? = withContext(Dispatchers.IO) {
-        if (extension.lowercase() == "pdf") {
-            return@withContext loadPdfPage(pageIndex, width, height)
-        }
+        if (extension.lowercase() == "pdf") return@withContext loadPdfPage(pageIndex, width, height)
 
-        //\ 1 尝试从已解析缓存直接读取（最快路径，无需加锁，extractedFiles 是并发 Map）
-        val cachedFile = extractedFiles[pageIndex]
-        if (cachedFile?.exists() == true) {
-            return@withContext decodeImageFile(cachedFile, width, height)
-        }
+        // 1. 缓存优先 (Sliding Window 预解析结果)
+        extractedFiles[pageIndex]?.let { if (it.exists()) return@withContext decodeImageFile(it, width, height) }
 
-        // 如果镜像未就绪，使用流式快速通道（Streaming Fallback）
-        // 此路径不持有 archiveMutex，完全不因后台镜像拷贝而卡顿
-        if (!isMirrorReady) {
-            android.util.Log.i("ArchiveLoader", "Mirror not ready, using streaming fallback for page $pageIndex")
+        // 快速检查：如果协程已取消（用户已划走），直接退出，不争夺锁
+        ensureActive()
+
+        val finalResult = archiveMutex.withLock {
+            // 拿到锁后再次检查有效性
+            if (!kotlin.coroutines.coroutineContext.isActive) return@withLock null
+            
+            // 2. [核心优先级]：NIO 持久会话随机寻址 (O(1))
+            // 针对冷启动的大文件，这是最快的路径
+            if (ensureActiveSession()) {
+                val headers = activeSortedHeaders
+                android.util.Log.d("ArchiveLoader", "Fast Path NIO: check index $pageIndex (Total: ${headers?.size})")
+                if (headers != null && pageIndex in headers.indices) {
+                    val entry = headers[pageIndex]
+                    val result = try {
+                        when (extension.lowercase()) {
+                            "cbz", "zip" -> {
+                                val entryName = entry as String
+                                android.util.Log.d("ArchiveLoader", "NIO ZIP: fetching $entryName")
+                                activeZipFile?.let { zip ->
+                                    zip.getEntry(entryName)?.let { zipEntry ->
+                                        zip.getInputStream(zipEntry).use { decodeImageStream(it, width, height) }
+                                    }
+                                } ?: activeZipIndexer?.let { indexer ->
+                                    indexer.getEntryInputStream(entryName)?.use { decodeImageStream(it, width, height) }
+                                }
+                            }
+                            "cbr", "rar" -> {
+                                val header = entry as com.github.junrar.rarfile.FileHeader
+                                android.util.Log.d("ArchiveLoader", "NIO RAR: fetching ${header.fileName}")
+                                activeRarArchive?.getInputStream(header)?.use { stream ->
+                                    decodeImageStream(stream, width, height)
+                                }
+                            }
+                            else -> null
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("ArchiveLoader", "NIO Fetch failed: ${e.message}", e)
+                        null
+                    }
+                    if (result != null) {
+                        android.util.Log.i("ArchiveLoader", "Fast Path NIO SUCCESS for page $pageIndex: ${result.width}x${result.height} [${result.config}]")
+                        return@withLock result
+                    } else {
+                        android.util.Log.w("ArchiveLoader", "Fast Path NIO returned NULL for page $pageIndex")
+                    }
+                }
+            }
+
+            android.util.Log.d("ArchiveLoader", "Trying Mirror Path for page $pageIndex")
+
+            // 3. 本地镜像读取 (针对较小文件或已镜像的文件)
+            ensureSessionMirror()?.let { mirror ->
+                val result = try {
+                    when (extension.lowercase()) {
+                        "cbz", "zip" -> {
+                            java.util.zip.ZipFile(mirror).use { zip ->
+                                val entries = zip.entries().asSequence().filter { !it.isDirectory && isImage(it.name) }.sortedBy { it.name }.toList()
+                                if (pageIndex in entries.indices) {
+                                    zip.getInputStream(entries[pageIndex]).use { decodeImageStream(it, width, height) }
+                                } else null
+                            }
+                        }
+                        "cbr", "rar" -> {
+                            Archive(mirror).use { archive ->
+                                val headers = archive.getFileHeaders().filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
+                                if (pageIndex in headers.indices) {
+                                    archive.getInputStream(headers[pageIndex]).use { decodeImageStream(it, width, height) }
+                                } else null
+                            }
+                        }
+                        else -> null
+                    }
+                } catch (e: Exception) { null }
+                if (result != null) return@withLock result
+            }
+
+            // 4. [最后兜底]：慢速顺序流扫描
+            // 只有当上述随机读取方式都失败时，才进行代价极高的全量线性扫描
             try {
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     when (extension.lowercase()) {
@@ -260,9 +413,7 @@ class LocalArchivePageLoader(
                             var idx = 0
                             while (entry != null) {
                                 if (!entry.isDirectory && isImage(entry.name)) {
-                                    if (idx == pageIndex) {
-                                        return@withContext decodeImageStream(zis, width, height)
-                                    }
+                                    if (idx == pageIndex) return@withLock decodeImageStream(zis, width, height)
                                     idx++
                                 }
                                 zis.closeEntry()
@@ -271,154 +422,77 @@ class LocalArchivePageLoader(
                         }
                         "cbr", "rar" -> {
                             Archive(input).use { archive ->
-                                val headers = archive.fileHeaders.filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
+                                val headers = archive.getFileHeaders().filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
                                 if (pageIndex in headers.indices) {
-                                    archive.getInputStream(headers[pageIndex]).use { return@withContext decodeImageStream(it, width, height) }
+                                    archive.getInputStream(headers[pageIndex]).use { return@withLock decodeImageStream(it, width, height) }
                                 }
                             }
                         }
                     }
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-
-        //\ 3 常规路径：镜像已就绪，进入同步加锁提取区
-        archiveMutex.withLock {
-            val readyMirror = ensureSessionMirror()
-            if (readyMirror != null) {
-                when (extension.lowercase()) {
-                    "cbz", "zip" -> {
-                        java.util.zip.ZipFile(readyMirror).use { zip ->
-                            val entries = zip.entries().asSequence().filter { !it.isDirectory && isImage(it.name) }.sortedBy { it.name }.toList()
-                            if (pageIndex in entries.indices) {
-                                zip.getInputStream(entries[pageIndex]).use { return@withContext decodeImageStream(it, width, height) }
-                            }
-                        }
-                    }
-                    "cbr", "rar" -> {
-                        Archive(readyMirror).use { archive ->
-                            val headers = archive.fileHeaders.filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
-                            if (pageIndex in headers.indices) {
-                                archive.getInputStream(headers[pageIndex]).use { return@withContext decodeImageStream(it, width, height) }
-                            }
-                        }
-                    }
-                }
-            } else if (isStreamingOnly) {
-                // 如果是强制流式模式，直接从流中提取
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    when (extension.lowercase()) {
-                        "cbz", "zip" -> {
-                            val zis = ZipInputStream(input)
-                            var entry = zis.nextEntry
-                            var idx = 0
-                            while (entry != null) {
-                                if (!entry.isDirectory && isImage(entry.name)) {
-                                    if (idx == pageIndex) return@withContext decodeImageStream(zis, width, height)
-                                    idx++
-                                }
-                                zis.closeEntry()
-                                entry = zis.nextEntry
-                            }
-                        }
-                        "cbr", "rar" -> {
-                            Archive(input).use { archive ->
-                                val headers = archive.fileHeaders.filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
-                                if (pageIndex in headers.indices) {
-                                    archive.getInputStream(headers[pageIndex]).use { return@withContext decodeImageStream(it, width, height) }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            } catch (e: Exception) { e.printStackTrace() }
         }
         
-        //\ 2 发起预加载
         triggerSlidingWindow(pageIndex)
-        null
+        return@withContext finalResult
     }
 
-    /**
-     * 针对内存占用优化的渲染策略：
-     * 对于较小的图片直接在内存中解码以提升速度，
-     * 对于超大图片则通过临时文件降级处理，防止 OOM
-     */
     private fun decodeImageStream(input: java.io.InputStream, reqWidth: Int, reqHeight: Int): Bitmap? {
-        val MAX_MEMORY_IMG_SIZE = 15 * 1024 * 1024 // 15MB 阈值
+        val MAX_MARK_SIZE = 30 * 1024 * 1024 // 30MB limit for huge pages
+        val bis = if (input is java.io.BufferedInputStream) input else java.io.BufferedInputStream(input, 128 * 1024)
         
         try {
-            //\ 我们不能直接调用 inputavailable()，因为它在流式压缩包下通常不准确
-            // 采用 ByteArrayOutputStream 捕获最多 MAX_MEMORY_IMG_SIZE 字节
-            val baos = java.io.ByteArrayOutputStream()
-            val buffer = ByteArray(16384)
-            var totalRead = 0
-            var exceeded = false
+            bis.mark(MAX_MARK_SIZE)
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeStream(bis, null, options)
             
-            while (true) {
-                val read = input.read(buffer)
-                if (read == -1) break
-                totalRead += read
-                if (totalRead > MAX_MEMORY_IMG_SIZE) {
-                    exceeded = true
-                    break
-                }
-                baos.write(buffer, 0, read)
+            if (options.outWidth <= 0 || options.outHeight <= 0) {
+                android.util.Log.e("ArchiveLoader", "Failed to decode image bounds (possibly unsupported format). Header size: ${options.outMimeType}")
+                return null
             }
+            
+            try {
+                bis.reset()
+            } catch (e: java.io.IOException) {
+                android.util.Log.e("ArchiveLoader", "Mark reset failed (Image too large for buffer?): ${e.message}")
+                return null
+            }
+            
+            val sampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
+            options.inSampleSize = sampleSize
+            options.inJustDecodeBounds = false
+            options.inPreferredConfig = Bitmap.Config.RGB_565
+            options.inMutable = true
 
-            if (!exceeded) {
-                // 情况 A：轻快路径 —— 内存直达
-                val bytes = baos.toByteArray()
-                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-                
-                val sampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
-                options.inSampleSize = sampleSize
-                options.inJustDecodeBounds = false
-                options.inPreferredConfig = Bitmap.Config.RGB_565
-                options.inMutable = true
+            applyBitmapReuse(options, options.outWidth / sampleSize, options.outHeight / sampleSize)
 
-                // 应用 Bitmap 复用
-                val targetW = options.outWidth / sampleSize
-                val targetH = options.outHeight / sampleSize
-                applyBitmapReuse(options, targetW, targetH)
-
-                val bitmap = try {
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-                } catch (e: Exception) {
-                    options.inBitmap = null
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-                }
-                return if (isSharpenEnabled && bitmap != null) sharpenBitmap(bitmap) else bitmap
-            } else {
-                // 情况 B：兜底路径 —— 磁盘降级 (处理极端高清巨图)
-                val tempFile = File(context.cacheDir, "loader_fallback_${java.util.UUID.randomUUID()}.tmp")
-                try {
-                    FileOutputStream(tempFile).use { out ->
-                        baos.writeTo(out) // 先把已经读出来的部分写进去
-                        input.copyTo(out) // 再把剩下的流拷完
+            var bitmap = try {
+                BitmapFactory.decodeStream(bis, null, options)
+            } catch (e: Exception) {
+                android.util.Log.w("ArchiveLoader", "inBitmap decode CRASHED, retrying fresh: ${e.message}")
+                null // Will trigger the check below
+            }
+            
+            if (bitmap == null) {
+                // Final attempt without inBitmap if previous returned null or crashed
+                if (options.inBitmap != null) {
+                    try {
+                        bis.reset()
+                        options.inBitmap = null
+                        bitmap = BitmapFactory.decodeStream(bis, null, options)
+                    } catch (ex: Exception) {
+                        android.util.Log.e("ArchiveLoader", "Final decode retry failed: ${ex.message}")
                     }
-                    val options = BitmapFactory.Options().apply { 
-                        inJustDecodeBounds = true 
-                        inPreferredConfig = Bitmap.Config.RGB_565
-                    }
-                    BitmapFactory.decodeFile(tempFile.absolutePath, options)
-                    val sampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
-                    options.inSampleSize = sampleSize
-                    options.inJustDecodeBounds = false
-                    options.inMutable = true
-                    applyBitmapReuse(options, options.outWidth / sampleSize, options.outHeight / sampleSize)
-
-                    val bitmap = BitmapFactory.decodeFile(tempFile.absolutePath, options)
-                    return if (isSharpenEnabled && bitmap != null) sharpenBitmap(bitmap) else bitmap
-                } finally {
-                    if (tempFile.exists()) tempFile.delete()
                 }
             }
+            
+            if (bitmap == null) {
+                android.util.Log.e("ArchiveLoader", "BitmapFactory returned null for stream even after retry")
+            }
+            
+            return if (isSharpenEnabled && bitmap != null) sharpenBitmap(bitmap) else bitmap
         } catch (e: Exception) {
-            e.printStackTrace()
+            android.util.Log.e("ArchiveLoader", "decodeImageStream encountered fatal error: ${e.message}", e)
             return null
         }
     }
@@ -438,204 +512,150 @@ class LocalArchivePageLoader(
         }
     }
 
-    /**
-     * 滑动窗口提取核心：[方案 A] 的实现
-     * 提取 [targetIndex - 5, targetIndex + 5] 范围内的图片
-     */
     private suspend fun extractWindow(targetIndex: Int) {
         val count = getPageCount()
-        if (count == 0) return
+        if (count == 0 || cachedEntries == null) return
         
-        val entries = cachedEntries ?: return
         val start = (targetIndex - 5).coerceAtLeast(0)
         val end = (targetIndex + 5).coerceAtMost(count - 1)
-        
         val neededIndices = (start..end).filter { extractedFiles[it]?.exists() != true }
         if (neededIndices.isEmpty()) return
 
-        try {
-            val archiveFile = ensureSessionMirror()
-            if (archiveFile != null) {
-                when (extension.lowercase()) {
-                    "cbz", "zip" -> {
-                        java.util.zip.ZipFile(archiveFile).use { zipFile ->
-                            val items = zipFile.entries().asSequence()
-                                .filter { !it.isDirectory && isImage(it.name) }
-                                .sortedBy { it.name }
-                                .toList()
+        // 核心理念：后台预加载绝不能长时间霸占全局锁
+        neededIndices.forEach { idx ->
+            coroutineContext.ensureActive()
+            kotlinx.coroutines.yield()
 
-                            neededIndices.forEach { idx ->
-                                if (idx in items.indices) {
-                                    zipFile.getInputStream(items[idx]).use { input ->
-                                        saveEntryToCache(input, idx)
+            try {
+                archiveMutex.withLock {
+                    if (!kotlin.coroutines.coroutineContext.isActive) return@withLock
+                    
+                    val mirrorFile = ensureSessionMirror()
+                    if (mirrorFile != null) {
+                        // 1. 通过物理镜像提取
+                        when (extension.lowercase()) {
+                            "cbz", "zip" -> {
+                                java.util.zip.ZipFile(mirrorFile).use { zip ->
+                                    val entriesList = zip.entries().asSequence().filter { !it.isDirectory && isImage(it.name) }.sortedBy { it.name }.toList()
+                                    if (idx in entriesList.indices) {
+                                        zip.getInputStream(entriesList[idx]).use { saveEntryToCache(it, idx) }
+                                    }
+                                }
+                            }
+                            "cbr", "rar" -> {
+                                Archive(mirrorFile).use { archive ->
+                                    val hList = archive.getFileHeaders().filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
+                                    if (idx in hList.indices) {
+                                        archive.getInputStream(hList[idx]).use { imgIn -> saveEntryToCache(imgIn, idx) }
                                     }
                                 }
                             }
                         }
-                    }
-                    "cbr", "rar" -> {
-                        Archive(archiveFile).use { archive ->
-                            val headers = archive.fileHeaders
-                                .filter { !it.isDirectory && isImage(it.fileName) }
-                                .sortedBy { it.fileName }
-                            
-                            neededIndices.forEach { idx ->
-                                if (idx in headers.indices) {
-                                    archive.getInputStream(headers[idx]).use { imgIn ->
-                                        saveEntryToCache(imgIn, idx)
-                                    }
+                    } else if (ensureActiveSession()) {
+                        // 2. 超大文件利用 NIO Bridge 零开销预提取
+                        val headers = activeSortedHeaders ?: return@withLock
+                        if (idx in headers.indices) {
+                            val entry = headers[idx]
+                            when (extension.lowercase()) {
+                                "cbz", "zip" -> {
+                                    val name = entry as String
+                                    activeZipFile?.let { zip ->
+                                        zip.getEntry(name)?.let { zip.getInputStream(it) }
+                                    } ?: activeZipIndexer?.getEntryInputStream(name)
                                 }
-                            }
-                        }
-                    }
-                }
-            } else if (isStreamingOnly) {
-                // 流式模式下的批量预提取
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    when (extension.lowercase()) {
-                        "cbz", "zip" -> {
-                            val zis = ZipInputStream(input)
-                            var entry = zis.nextEntry
-                            var idx = 0
-                            val targetSet = neededIndices.toSet()
-                            while (entry != null && targetSet.any { it >= idx }) {
-                                if (!entry.isDirectory && isImage(entry.name)) {
-                                    if (idx in targetSet) saveEntryToCache(zis, idx)
-                                    idx++
+                                "cbr", "rar" -> {
+                                    activeRarArchive?.getInputStream(entry as com.github.junrar.rarfile.FileHeader)
                                 }
-                                zis.closeEntry()
-                                entry = zis.nextEntry
-                            }
-                        }
-                        "cbr", "rar" -> {
-                            Archive(input).use { archive ->
-                                val headers = archive.fileHeaders.filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
-                                neededIndices.forEach { idx ->
-                                    if (idx in headers.indices) {
-                                        archive.getInputStream(headers[idx]).use { saveEntryToCache(it, idx) }
-                                    }
-                                }
-                            }
+                                else -> null
+                            }?.use { saveEntryToCache(it, idx) }
                         }
                     }
                 }
+            } catch (e: Exception) {
+                android.util.Log.e("ArchiveLoader", "Background pre-fetch failed for page $idx: ${e.message}")
             }
-            cleanupOldCache(targetIndex)
-        } catch (e: Exception) {
-            e.printStackTrace()
         }
+        cleanupOldCache(targetIndex)
     }
 
     private fun saveEntryToCache(input: java.io.InputStream, index: Int) {
         val file = File(sessionDir, "p_$index.tmp")
-        FileOutputStream(file).use { out ->
-            input.copyTo(out)
-        }
+        file.outputStream().use { out -> input.copyTo(out) }
         extractedFiles[index] = file
     }
 
+    private var slidingWindowJob: kotlinx.coroutines.Job? = null
     private fun triggerSlidingWindow(centerIndex: Int) {
-        sessionScope.launch {
-            archiveMutex.withLock {
-                extractWindow(centerIndex)
-            }
+        slidingWindowJob?.cancel()
+        slidingWindowJob = sessionScope.launch(Dispatchers.IO) {
+            // 延时 300ms：如果用户在疯狂划动进度条，不启动任何后台 I/O
+            kotlinx.coroutines.delay(300)
+            extractWindow(centerIndex)
         }
     }
 
     private fun cleanupOldCache(currentIndex: Int) {
         val keepRange = (currentIndex - 15)..(currentIndex + 15)
         extractedFiles.keys().asSequence().forEach { index ->
-            if (index !in keepRange) {
-                extractedFiles.remove(index)?.delete()
-            }
+            if (index !in keepRange) extractedFiles.remove(index)?.delete()
         }
     }
 
-    /**
-     * PDF 分级渲染优化：[RGB_565] 显存优化版本
-     */
     private fun loadPdfPage(pageIndex: Int, reqWidth: Int, reqHeight: Int): Bitmap? {
         try {
             openPdfSync()
             val renderer = pdfRenderer ?: return null
             if (pageIndex !in 0 until renderer.pageCount) return null
-
             val page = renderer.openPage(pageIndex)
             val scale = (minOf(reqWidth.toFloat() / page.width, reqHeight.toFloat() / page.height)).coerceAtMost(2f)
-            
             val w = (page.width * scale).toInt().coerceAtLeast(1)
             val h = (page.height * scale).toInt().coerceAtLeast(1)
-            
-            // 使用复用池获取 Bitmap
             val bitmap = obtainBitmap(w, h, Bitmap.Config.RGB_565)
             bitmap.eraseColor(android.graphics.Color.WHITE)
-            
-            val matrix = android.graphics.Matrix().apply { postScale(scale, scale) }
+            val matrix = Matrix().apply { postScale(scale, scale) }
             page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
             page.close()
-            
             return if (isSharpenEnabled) sharpenBitmap(bitmap) else bitmap
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return null
-        }
+        } catch (e: Exception) { e.printStackTrace(); return null }
     }
 
     private fun sharpenBitmap(src: Bitmap): Bitmap {
         val width = src.width
         val height = src.height
-        val config = if (src.config == Bitmap.Config.RGB_565) Bitmap.Config.RGB_565 else Bitmap.Config.ARGB_8888
-        val kernel = floatArrayOf(
-            0f, -1f, 0f,
-            -1f, 5f, -1f,
-            0f, -1f, 0f
-        )
-        
-        // 从池中获取目标 Bitmap，而不是直接分配新的
-        val dest = obtainBitmap(width, height, config)
-        
-        // Android 平台上如果不使用 RenderScript，最快的方式是使用 ColorMatrix 或直接在 Canvas 上叠绘偏移
-        // 这里使用一种高性能的 Canvas 偏移叠绘法模拟卷积锐化 (避免逐像素循环)
+        val dest = obtainBitmap(width, height, if (src.config == Bitmap.Config.RGB_565) Bitmap.Config.RGB_565 else Bitmap.Config.ARGB_8888)
         val canvas = android.graphics.Canvas(dest)
         val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
-        
-        canvas.drawBitmap(src, 0f, 0f, null) // 底图
-        
-        // 叠绘偏移层实现边缘增强 (Laplacian 模拟)
-        paint.alpha = 100 // 混合强度
+        canvas.drawBitmap(src, 0f, 0f, null)
+        paint.alpha = 100
         canvas.drawBitmap(src, 1f, 1f, paint) 
-        
-        // 处理完毕，归还原始 Bitmap 到复用池
         releaseBitmap(src)
-        
         return dest
     }
 
     private fun openPdfSync() {
         if (pdfRenderer != null) return
-        pdfPfd = context.contentResolver.openFileDescriptor(uri, "r")
-        pdfPfd?.let {
-            pdfRenderer = PdfRenderer(it)
+        try {
+            pdfPfd?.close()
+            val pfd = context.contentResolver.openFileDescriptor(uri, "r")
+            pdfPfd = pfd
+            pdfPfd?.let { pdfRenderer = PdfRenderer(it) }
+        } catch (e: Exception) {
+            android.util.Log.e("ArchiveLoader", "Failed to open PDF: ${e.message}")
+            pdfPfd?.close()
+            pdfPfd = null
+            pdfRenderer = null
         }
     }
 
     private fun decodeImageFile(file: File, reqWidth: Int, reqHeight: Int): Bitmap? {
         val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, options)
-        
         val sampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
         options.inSampleSize = sampleSize
         options.inJustDecodeBounds = false
         options.inPreferredConfig = Bitmap.Config.RGB_565 
-        
-        // 尝试从池中寻找可复用的 Bitmap
-        // 注意：BitmapFactory 复用要求比较严格，尤其是 inSampleSize 后的实际尺寸
         val targetW = options.outWidth / sampleSize
         val targetH = options.outHeight / sampleSize
-        
-        //\ inBitmap 弹性复用（Android 44+ 支持只要内存足够即可复用）
-        //\ 只要池中 Bitmap 的总字节数 (byteCount) 大于等于目标尺寸，即可复用（Android 44+ 支持）
-        // 这极大地提升了复用命中率，因为不需要长宽完全相等
         synchronized(bitmapPool) {
             val it = bitmapPool.iterator()
             val requiredBytes = targetW * targetH * (if (options.inPreferredConfig == Bitmap.Config.RGB_565) 2 else 4)
@@ -648,13 +668,10 @@ class LocalArchivePageLoader(
                 }
             }
         }
-        
-        options.inMutable = true // 必须为 true 才能在下次被复用
-        
+        options.inMutable = true
         return try {
             BitmapFactory.decodeFile(file.absolutePath, options)
-        } catch (e: IllegalArgumentException) {
-            // 如果 inBitmap 报错（极少见），回退到普通解码
+        } catch (e: Exception) {
             options.inBitmap = null
             BitmapFactory.decodeFile(file.absolutePath, options)
         }
@@ -681,23 +698,278 @@ class LocalArchivePageLoader(
 
     override fun close() {
         sessionScope.cancel()
+        closeActiveSession()
         try {
             pdfRenderer?.close()
             pdfPfd?.close()
-            if (sessionDir.exists()) {
-                sessionDir.deleteRecursively()
-            }
-            // 确保 sessionMirror （如果是临时拷贝的话）被清理
-            if (uri.scheme != "file") {
-                sessionMirror?.delete()
-            }
+            if (sessionDir.exists()) sessionDir.deleteRecursively()
+            if (uri.scheme != "file") sessionMirror?.delete()
             extractedFiles.clear()
             synchronized(bitmapPool) {
                 bitmapPool.forEach { it.recycle() }
                 bitmapPool.clear()
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    private inner class RarNioChannel(private val channel: FileChannel) : com.github.junrar.io.SeekableReadOnlyByteChannel {
+        private var position: Long = 0
+        override fun getPosition(): Long = position
+        override fun setPosition(pos: Long) { position = pos }
+        override fun read(): Int {
+            val bb = ByteBuffer.allocate(1)
+            return if (channel.read(bb, position) <= 0) -1 else {
+                val b = bb.get(0).toInt() and 0xFF
+                position++
+                b
+            }
         }
+        override fun read(buffer: ByteArray?, off: Int, count: Int): Int {
+            if (buffer == null) return 0
+            val bb = ByteBuffer.wrap(buffer, off, count)
+            val read = channel.read(bb, position)
+            if (read > 0) position += read
+            return read
+        }
+        override fun readFully(buffer: ByteArray, count: Int): Int {
+            val bb = ByteBuffer.wrap(buffer, 0, count)
+            var totalRead = 0
+            while (totalRead < count) {
+                val read = channel.read(bb, position + totalRead)
+                if (read <= 0) break
+                totalRead += read
+            }
+            position += totalRead
+            return totalRead
+        }
+        override fun close() { /* Session handles channel closure */ }
+    }
+
+    private inner class RarVolume(
+        private val nioChannel: RarNioChannel,
+        private var archive: com.github.junrar.Archive?
+    ) : com.github.junrar.volume.Volume {
+        override fun getChannel(): com.github.junrar.io.SeekableReadOnlyByteChannel = nioChannel
+        override fun getLength(): Long = activeChannel?.size() ?: 0
+        override fun getArchive(): com.github.junrar.Archive = archive ?: activeRarArchive!!
+    }
+
+    private inner class RarVolumeManager(private val nioChannel: RarNioChannel) : com.github.junrar.volume.VolumeManager {
+        override fun nextVolume(archive: com.github.junrar.Archive?, lastVolume: com.github.junrar.volume.Volume?): com.github.junrar.volume.Volume? = 
+            if (lastVolume == null) RarVolume(nioChannel, archive) else null
+    }
+
+    private inner class ZipFastIndexer(private val channel: FileChannel) {
+        private val entries = mutableMapOf<String, ZipEntryMeta>()
+        init { parseCentralDirectory() }
+        fun getEntryNames(): List<String> = entries.keys.toList()
+        fun getEntryInputStream(name: String): java.io.InputStream? {
+            val meta = entries[name] ?: return null
+            try {
+                // 1. 读取 Local File Header (30 bytes)
+                val lfhBuf = ByteBuffer.allocate(30).order(ByteOrder.LITTLE_ENDIAN)
+                channel.read(lfhBuf, meta.localHeaderOffset)
+                lfhBuf.flip()
+                if (lfhBuf.getInt() != 0x04034b50) return null
+                
+                lfhBuf.position(8)
+                val method = lfhBuf.getShort().toInt() and 0xFFFF
+                
+                lfhBuf.position(26)
+                val nameLen = lfhBuf.getShort().toInt() and 0xFFFF
+                val extraLen = lfhBuf.getShort().toInt() and 0xFFFF
+                
+                val dataOffset = meta.localHeaderOffset + 30 + nameLen + extraLen
+                
+                // 2. 创建 Sub-Channel InputStream
+                val rawStream = object : java.io.InputStream() {
+                    private var currentPos = dataOffset
+                    private val endPos = dataOffset + meta.compressedSize
+                    private val singleBuf = ByteBuffer.allocate(8192)
+                    private var bufPos = -1L
+                    
+                    override fun read(): Int {
+                        if (currentPos >= endPos) return -1
+                        if (bufPos == -1L || currentPos < bufPos || currentPos >= bufPos + singleBuf.limit()) {
+                            singleBuf.clear()
+                            val remain = (endPos - currentPos).toInt()
+                            if (remain <= 0) return -1
+                            singleBuf.limit(remain.coerceAtMost(8192))
+                            val read = channel.read(singleBuf, currentPos)
+                            if (read <= 0) return -1
+                            singleBuf.flip()
+                            bufPos = currentPos
+                        }
+                        val b = singleBuf.get((currentPos - bufPos).toInt()).toInt() and 0xFF
+                        currentPos++
+                        return b
+                    }
+                    
+                    override fun read(b: ByteArray, off: Int, len: Int): Int {
+                        if (currentPos >= endPos) return -1
+                        val remain = (endPos - currentPos).toLong()
+                        val toRead = len.toLong().coerceAtMost(remain).toInt()
+                        val bb = ByteBuffer.wrap(b, off, toRead)
+                        val read = channel.read(bb, currentPos)
+                        if (read > 0) {
+                            currentPos += read
+                            bufPos = -1L // Invalidate buffer
+                        }
+                        return read
+                    }
+                }
+                
+                return when (method) {
+                    0 -> rawStream // Stored
+                    8 -> {
+                        val inflater = java.util.zip.Inflater(true)
+                        object : java.util.zip.InflaterInputStream(rawStream, inflater) {
+                            override fun close() {
+                                super.close()
+                                inflater.end() // 关键：释放原生内存以防 OOM
+                            }
+                        }
+                    }
+                    else -> null
+                }
+            } catch (e: Exception) {
+                return null
+            }
+        }
+        private fun parseCentralDirectory() {
+            val size = channel.size()
+            if (size < 22) return
+            
+            // 1. 寻找 Standard EOCD
+            val scanLength = (65536 + 22).toLong().coerceAtMost(size)
+            val scanStart = size - scanLength
+            val scanBuf = ByteBuffer.allocate(scanLength.toInt()).order(ByteOrder.LITTLE_ENDIAN)
+            channel.read(scanBuf, scanStart)
+            scanBuf.flip()
+            
+            var eocdOffset = -1L
+            for (i in (scanBuf.limit() - 22) downTo 0) {
+                if (scanBuf.getInt(i) == 0x06054b50) {
+                    eocdOffset = scanStart + i
+                    break
+                }
+            }
+            if (eocdOffset == -1L) return
+
+            // 2. 检查 ZIP64
+            var totalEntries: Long = -1
+            var cdSize: Long = -1
+            var cdOffset: Long = -1
+
+            val locatorOffset = eocdOffset - 20
+            if (locatorOffset >= 0) {
+                val locBuf = ByteBuffer.allocate(20).order(ByteOrder.LITTLE_ENDIAN)
+                channel.read(locBuf, locatorOffset)
+                locBuf.flip()
+                if (locBuf.getInt() == 0x07064b50) {
+                    locBuf.getInt() // skip disk number
+                    val zip64EocdOffset = locBuf.getLong()
+                    
+                    val recBuf = ByteBuffer.allocate(56).order(ByteOrder.LITTLE_ENDIAN)
+                    channel.read(recBuf, zip64EocdOffset)
+                    recBuf.flip()
+                    if (recBuf.getInt() == 0x06064b50) {
+                        recBuf.getLong() // record size
+                        recBuf.getShort() // version made
+                        recBuf.getShort() // version needed
+                        recBuf.getInt() // disk
+                        recBuf.getInt() // disk start
+                        recBuf.getLong() // entries in disk
+                        totalEntries = recBuf.getLong()
+                        cdSize = recBuf.getLong()
+                        cdOffset = recBuf.getLong()
+                    }
+                }
+            }
+
+            if (totalEntries == -1L) {
+                val eocdBuf = ByteBuffer.allocate(22).order(ByteOrder.LITTLE_ENDIAN)
+                channel.read(eocdBuf, eocdOffset)
+                eocdBuf.flip()
+                eocdBuf.position(10)
+                totalEntries = eocdBuf.getShort().toLong() and 0xFFFF
+                cdSize = eocdBuf.getInt().toLong() and 0xFFFFFFFFL
+                cdOffset = eocdBuf.getInt().toLong() and 0xFFFFFFFFL
+            }
+
+            // 3. 解析 Central Directory
+            channel.position(cdOffset)
+            val cdBuf = ByteBuffer.allocate(cdSize.toInt()).order(ByteOrder.LITTLE_ENDIAN)
+            channel.read(cdBuf)
+            cdBuf.flip()
+
+            repeat(totalEntries.toInt()) {
+                var entryStart = cdBuf.position()
+                if (cdBuf.remaining() < 46) return@repeat
+                var sig = cdBuf.getInt()
+                if (sig != 0x02014b50) {
+                    // [修复：静默对齐 Bug] 发现签名不匹配时尝试向前探测（Hunter 模式）
+                    android.util.Log.e("ArchiveLoader", "ZIP CD signature mismatch at $entryStart, hunting...")
+                    var found = false
+                    while (cdBuf.remaining() >= 46) {
+                        if (cdBuf.getInt() == 0x02014b50) {
+                            entryStart = cdBuf.position() - 4
+                            found = true
+                            break
+                        }
+                    }
+                    if (!found) return@repeat
+                }
+                
+                cdBuf.position(entryStart + 20)
+                val uncompSize = cdBuf.getInt().toLong() and 0xFFFFFFFFL
+                var compSize = cdBuf.getInt().toLong() and 0xFFFFFFFFL
+                
+                cdBuf.position(entryStart + 28)
+                val nameLen = cdBuf.getShort().toInt() and 0xFFFF
+                val extraLen = cdBuf.getShort().toInt() and 0xFFFF
+                val commentLen = cdBuf.getShort().toInt() and 0xFFFF
+                cdBuf.position(entryStart + 42)
+                var localHeaderOffset = cdBuf.getInt().toLong() and 0xFFFFFFFFL
+                
+                val nameBytes = ByteArray(nameLen)
+                cdBuf.get(nameBytes)
+                val name = String(nameBytes)
+                
+                if (extraLen > 0) {
+                    val extraStart = cdBuf.position()
+                    var p = 0
+                    while (p + 4 <= extraLen) {
+                        val tag = cdBuf.getShort().toInt() and 0xFFFF
+                        val dataSize = cdBuf.getShort().toInt() and 0xFFFF
+                        if (tag == 0x0001) {
+                            // ZIP64 Extra: 根据 CD 记录中的 0xFFFFFFFF 标志来读取对应字段
+                            var currentExtraPos = extraStart + p + 4
+                            if (uncompSize == 0xFFFFFFFFL && currentExtraPos + 8 <= extraStart + 4 + dataSize) {
+                                currentExtraPos += 8
+                            }
+                            if (compSize == 0xFFFFFFFFL && currentExtraPos + 8 <= extraStart + 4 + dataSize) {
+                                cdBuf.position(currentExtraPos)
+                                compSize = cdBuf.getLong()
+                                currentExtraPos += 8
+                            }
+                            if (localHeaderOffset == 0xFFFFFFFFL && currentExtraPos + 8 <= extraStart + 4 + dataSize) {
+                                cdBuf.position(currentExtraPos)
+                                localHeaderOffset = cdBuf.getLong()
+                            }
+                            break
+                        }
+                        p += 4 + dataSize
+                        cdBuf.position(extraStart + p)
+                    }
+                    cdBuf.position(extraStart + extraLen)
+                }
+                
+                entries[name] = ZipEntryMeta(localHeaderOffset, compSize)
+                // 严格跳转：基于头部记录的偏移量 + 所有变长字段长度
+                cdBuf.position(entryStart + 46 + nameLen + extraLen + commentLen)
+            }
+        }
+        private inner class ZipEntryMeta(val localHeaderOffset: Long, val compressedSize: Long)
     }
 }
