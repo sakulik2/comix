@@ -7,7 +7,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.navigation.compose.NavHost
@@ -24,13 +23,13 @@ import xyz.sakulik.comic.ui.theme.ComicReaderTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.layout.padding
-import androidx.compose.runtime.remember
-
 
 
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.AbstractSavedStateViewModelFactory
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
 import xyz.sakulik.comic.viewmodel.BookshelfViewModel
-import xyz.sakulik.comic.viewmodel.ReaderViewModel
 import xyz.sakulik.comic.model.db.AppDatabase
 import android.app.Application
 import androidx.compose.runtime.collectAsState
@@ -68,7 +67,25 @@ class MainActivity : ComponentActivity() {
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun ComicAppNavHost() {
-    val application = androidx.compose.ui.platform.LocalContext.current.applicationContext as Application
+    // 【稳定方案 v2】将 BookshelfViewModel 提升至 Activity 作用域，
+    // 使用 AbstractSavedStateViewModelFactory 注入 SavedStateHandle，
+    // 彻底避免 getBackStackEntry() 在进程恢复时抛出崩溃。
+    val activity = androidx.compose.ui.platform.LocalContext.current as ComponentActivity
+    val application = activity.application
+    val bookshelfViewModel: BookshelfViewModel = viewModel(
+        viewModelStoreOwner = activity,
+        factory = object : AbstractSavedStateViewModelFactory(activity, activity.intent?.extras) {
+            override fun <T : ViewModel> create(key: String, modelClass: Class<T>, handle: SavedStateHandle): T {
+                @Suppress("UNCHECKED_CAST")
+                return BookshelfViewModel(
+                    application,
+                    AppDatabase.getDatabase(application).comicDao(),
+                    handle
+                ) as T
+            }
+        }
+    )
+
     val navController = rememberNavController()
 
     NavHost(
@@ -77,12 +94,7 @@ fun ComicAppNavHost() {
         modifier = Modifier.fillMaxSize()
     ) {
         // ========== [页面 1: 首页漫画库] ==========
-        composable<HomeRoute> { backStackEntry ->
-            // 书架 ViewModel 绑定到 HomeRoute 的生命周期，并注入其自带的 SavedStateHandle
-            val bookshelfViewModel: BookshelfViewModel = viewModel(viewModelStoreOwner = backStackEntry) {
-                BookshelfViewModel(application, AppDatabase.getDatabase(application).comicDao(), backStackEntry.savedStateHandle)
-            }
-
+        composable<HomeRoute> {
             BookshelfScreen(
                 viewModel = bookshelfViewModel,
                 onComicClick = { comic: ComicEntity ->
@@ -91,7 +103,7 @@ fun ComicAppNavHost() {
                 onSeriesClick = { group ->
                     navController.navigate(SeriesDetailRoute(seriesName = group.seriesName))
                 },
-                onSettingsClick = { 
+                onSettingsClick = {
                     navController.navigate(SettingsRoute)
                 },
                 onManualScrapeClick = { comic ->
@@ -103,12 +115,7 @@ fun ComicAppNavHost() {
         // ========== [页面 2: 系列详情页] ==========
         composable<SeriesDetailRoute> { backStackEntry ->
             val routeParams = backStackEntry.toRoute<SeriesDetailRoute>()
-            // 重要：通过 navController 找回 HomeRoute 的 BackStackEntry，从而获取共享的 BookshelfViewModel
-            val homeEntry = remember(backStackEntry) { navController.getBackStackEntry(HomeRoute) }
-            val bookshelfViewModel: BookshelfViewModel = viewModel(viewModelStoreOwner = homeEntry) {
-                BookshelfViewModel(application, AppDatabase.getDatabase(application).comicDao(), homeEntry.savedStateHandle)
-            }
-            
+            // 直接使用 Activity 级共享的 bookshelfViewModel
             val seriesData by bookshelfViewModel.getSeriesByName(routeParams.seriesName).collectAsState(initial = null)
             val configuration = androidx.compose.ui.platform.LocalConfiguration.current
             val adaptiveColumns = when {
@@ -149,13 +156,13 @@ fun ComicAppNavHost() {
                             // 跳转至元数据搜索页进行手动更正/刮削
                             navController.navigate(MetadataSearchRoute(comicId = comic.id))
                         },
-                        modifier = androidx.compose.ui.Modifier.padding(padding)
+                        modifier = Modifier.padding(padding)
 
                     )
                 } else {
                     androidx.compose.foundation.layout.Box(
                         modifier = Modifier.fillMaxSize(), 
-                        contentAlignment = androidx.compose.ui.Alignment.Center
+                        contentAlignment = Alignment.Center
                     ) {
                         androidx.compose.material3.CircularProgressIndicator()
                     }
@@ -185,7 +192,7 @@ fun ComicAppNavHost() {
             
             val state by readerViewModel.state.collectAsState()
             val isRtl by readerViewModel.isRtl.collectAsState()
-            val currentComic = readerViewModel.currentEntity
+            readerViewModel.currentEntity
 
             // 修正：即使 currentComic 为 null，只要状态是 Loading，也要展示进度条
             when (val s = state) {
@@ -251,12 +258,8 @@ fun ComicAppNavHost() {
         }
 
         // ========== [页面 6: 全局设置中心] ==========
-        composable<SettingsRoute> { backStackEntry ->
-            val homeEntry = remember(backStackEntry) { navController.getBackStackEntry(HomeRoute) }
-            val bookshelfViewModel: BookshelfViewModel = viewModel(viewModelStoreOwner = homeEntry) {
-                BookshelfViewModel(application, AppDatabase.getDatabase(application).comicDao(), homeEntry.savedStateHandle)
-            }
-
+        composable<SettingsRoute> {
+            // 直接使用 Activity 级共享的 bookshelfViewModel
             xyz.sakulik.comic.ui.settings.SettingsScreen(
                 onBack = { navController.popBackStack() },
                 onClearRemoteLibrary = { 
