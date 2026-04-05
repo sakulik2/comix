@@ -8,12 +8,18 @@ import androidx.work.workDataOf
 import androidx.work.CoroutineWorker
 import androidx.work.Data
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import xyz.sakulik.comic.model.db.AppDatabase
 import xyz.sakulik.comic.model.db.ComicDao
 import xyz.sakulik.comic.model.db.ComicEntity
 import xyz.sakulik.comic.model.scanner.ComicNameParser
 import xyz.sakulik.comic.model.scanner.CoverExtractor
+import xyz.sakulik.comic.model.preferences.SettingsDataStore
+import kotlinx.coroutines.flow.first
 import java.io.File
 
 /**
@@ -60,56 +66,69 @@ class LibraryScanWorker(
             val rootTree = DocumentFile.fromTreeUri(applicationContext, treeUri) ?: continue
             val allFiles = traverseTree(rootTree)
             
-            allFiles.forEachIndexed { index, file ->
-                val fileUriStr = file.uri.toString()
-                aliveUriStrings.add(fileUriStr)
-                foundCount++
-
-                setProgress(workDataOf(PROGRESS_MSG to "探测中 ($foundCount) : ${file.name}"))
-
-                // 检查是否已入库，或其封面是否被旧版机制留在 cacheDir 遭系统清场
-                val existing = comicDao.getComicByUri(fileUriStr)
-                // 触发条件：新书，或者是老书但曾有封面物理文件却离奇蒸发了
-                val needExtract = existing == null || (existing.coverCachePath != null && !File(existing.coverCachePath).exists())
-                
-                if (needExtract) {
-                    val originalName = file.name ?: "Unknown"
-                    val parsed = ComicNameParser.parse(originalName)
-                    val extension = originalName.substringAfterLast('.', "").lowercase()
-
-                    // [防丢改] 强制存入 filesDir 持久保存，而不是用随时被杀的 cacheDir
-                    val coverDir = File(applicationContext.filesDir, "covers").apply { mkdirs() }
-                    val coverFile = File(coverDir, "${java.util.UUID.randomUUID()}.webp")
-                    
-                    val extractSuccess = CoverExtractor.extractCover(applicationContext, file.uri, extension, coverFile)
-                    val newCoverPath = if (extractSuccess && coverFile.exists()) coverFile.absolutePath else null
-
-                    if (existing == null) {
-                        val entity = ComicEntity(
-                            title = originalName,
-                            uri = fileUriStr,
-                            extension = extension,
-                            coverCachePath = newCoverPath,
-                            seriesName = parsed.seriesName,
-                            region = parsed.region,
-                            format = parsed.format,
-                            issueNumber = parsed.issueNumber,
-                            volumeNumber = parsed.volumeNumber,
-                            addedTime = System.currentTimeMillis(),
-                            source = xyz.sakulik.comic.model.db.ComicSource.LOCAL,
-                            location = fileUriStr
-                        )
-                        val insertedId = comicDao.insert(entity)
-                        // 入库后触发元数据小聽
-                        if (insertedId != -1L) {
-                            xyz.sakulik.comic.model.metadata.MetadataScraper.autoScrape(applicationContext, entity.copy(id = insertedId))
+            // 并发限制信号量，防止大批量读取 archive 造成内存/句柄压力过大
+            val semaphore = Semaphore(4)
+            
+            val deferreds = allFiles.mapIndexed { index, file ->
+                async {
+                    semaphore.withPermit {
+                        val fileUriStr = file.uri.toString()
+                        aliveUriStrings.add(fileUriStr)
+                        
+                        // 为了 UI 丝滑，每处理 10% 或 10 本书上报一次进度，而不是疯狂刷新
+                        if (index % 10 == 0 || index == allFiles.size - 1) {
+                            setProgress(workDataOf(PROGRESS_MSG to "同步进度: ${index + 1}/${allFiles.size} - ${file.name}"))
                         }
-                    } else {
-                        // 如果文件已在库中但封面缺失，仅更新封面路径，保留阅读进度
-                        comicDao.update(existing.copy(coverCachePath = newCoverPath))
+
+                        // 检查是否已入库，或其封面是否被旧版机制留在 cacheDir 遭系统清场
+                        val existing = comicDao.getComicByUri(fileUriStr)
+                        // 触发条件：新书，或者是老书但曾有封面物理文件却离奇蒸发了
+                        val needExtract = existing == null || (existing.coverCachePath != null && !File(existing.coverCachePath).exists())
+                        
+                        if (needExtract) {
+                            val originalName = file.name ?: "Unknown"
+                            val parsed = ComicNameParser.parse(originalName)
+                            val extension = originalName.substringAfterLast('.', "").lowercase()
+
+                            val coverDir = File(applicationContext.filesDir, "covers").apply { mkdirs() }
+                            val coverFile = File(coverDir, "${java.util.UUID.randomUUID()}.webp")
+                            
+                            val extractSuccess = CoverExtractor.extractCover(applicationContext, file.uri, extension, coverFile)
+                            val newCoverPath = if (extractSuccess && coverFile.exists()) coverFile.absolutePath else null
+
+                            if (existing == null) {
+                                val entity = ComicEntity(
+                                    title = originalName,
+                                    uri = fileUriStr,
+                                    extension = extension,
+                                    coverCachePath = newCoverPath,
+                                    seriesName = parsed.seriesName,
+                                    region = parsed.region,
+                                    format = parsed.format,
+                                    issueNumber = parsed.issueNumber,
+                                    volumeNumber = parsed.volumeNumber,
+                                    addedTime = System.currentTimeMillis(),
+                                    source = xyz.sakulik.comic.model.db.ComicSource.LOCAL,
+                                    location = fileUriStr
+                                )
+                                val insertedId = comicDao.insert(entity)
+                                
+                                // 入库后触发元数据嗅探（仅在用户开启“元数据匹配”时执行）
+                                if (insertedId != -1L) {
+                                    val metadataEnabled = SettingsDataStore.getMetadataEnabledFlow(applicationContext).first()
+                                    if (metadataEnabled) {
+                                        xyz.sakulik.comic.model.metadata.MetadataScraper.autoScrape(applicationContext, entity.copy(id = insertedId))
+                                    }
+                                }
+                            } else {
+                                comicDao.update(existing.copy(coverCachePath = newCoverPath))
+                            }
+                        }
                     }
                 }
             }
+            deferreds.awaitAll()
+            foundCount += allFiles.size
         }
 
         // 阶段二：废墟自动清理（严格镜像剔除）

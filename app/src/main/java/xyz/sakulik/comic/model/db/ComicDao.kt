@@ -40,7 +40,7 @@ interface ComicDao {
     @Query("SELECT * FROM comic_books ORDER BY title ASC")
     fun getAllComicsByTitleFlow(): Flow<List<ComicEntity>>
 
-    @Query("SELECT * FROM comic_books WHERE title LIKE '%' || :query || '%' ORDER BY lastReadTime DESC")
+    @Query("SELECT * FROM comic_books WHERE (title LIKE '%' || :query || '%' OR remark LIKE '%' || :query || '%' OR seriesName LIKE '%' || :query || '%' OR authors LIKE '%' || :query || '%' OR publisher LIKE '%' || :query || '%' OR summary LIKE '%' || :query || '%') ORDER BY lastReadTime DESC")
     fun searchComics(query: String): Flow<List<ComicEntity>>
 
     @Query("UPDATE comic_books SET currentPage = :page, totalPages = :total, lastReadTime = :time WHERE id = :id")
@@ -54,4 +54,7 @@ interface ComicDao {
 
     @Query("DELETE FROM comic_books WHERE source = :source")
     suspend fun deleteComicsBySource(source: ComicSource): Int
+
+    @Query("UPDATE comic_books SET remark = :remark WHERE id = :id")
+    suspend fun updateRemark(id: Long, remark: String?): Int
 }

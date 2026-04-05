@@ -1,13 +1,10 @@
 package xyz.sakulik.comic.model.network
 
 import android.content.Context
-import kotlinx.coroutines.flow.firstOrNull
-import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
-import xyz.sakulik.comic.model.preferences.SettingsDataStore
 import java.util.concurrent.TimeUnit
 
 /**
@@ -15,36 +12,39 @@ import java.util.concurrent.TimeUnit
  */
 object RetrofitClient {
 
-    private var okHttpClient: OkHttpClient? = null
+    // 由外部（ViewModel）通过 collect DataStore 后注入，拦截器直接读取，无需 runBlocking
+    @Volatile var cachedApiKey: String? = null
+        private set
 
-    // 初始化 OkHttp 客户端并注入 Context 用于读取 DataStore
+    @Volatile private var okHttpClient: OkHttpClient? = null
+
+    /** 当 API Key 更新时调用，同时使现有客户端失效以便下次重建 */
+    fun updateApiKey(key: String?) {
+        if (cachedApiKey != key) {
+            cachedApiKey = key
+            okHttpClient = null
+        }
+    }
+
     @Synchronized
     fun getClient(context: Context): OkHttpClient {
-        if (okHttpClient == null) {
-            val logging = HttpLoggingInterceptor().apply {
-                level = if (xyz.sakulik.comic.BuildConfig.DEBUG)
-                    HttpLoggingInterceptor.Level.BASIC  // Debug: 只记录请求行，不倒 Body
-                else
-                    HttpLoggingInterceptor.Level.NONE   // Release: 完全静默
-            }
+        return okHttpClient ?: buildClient().also { okHttpClient = it }
+    }
 
-            // apiKeyProvider 此处需要打破协程阻隔边界：
-            // Interceptor 拦截器本身是 Java 同步体系，
-            // 故借由 runBlocking 切回阻塞主线抓取出 DataStore 的最新 Flow 瞬态记录
-            val headerInterceptor = HeaderInterceptor {
-                runBlocking {
-                    SettingsDataStore.getComicVineApiKeyFlow(context).firstOrNull()
-                }
-            }
-
-            okHttpClient = OkHttpClient.Builder()
-                .addInterceptor(logging)
-                .addInterceptor(headerInterceptor)
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(15, TimeUnit.SECONDS)
-                .build()
+    private fun buildClient(): OkHttpClient {
+        val logging = HttpLoggingInterceptor().apply {
+            level = if (xyz.sakulik.comic.BuildConfig.DEBUG)
+                HttpLoggingInterceptor.Level.BASIC
+            else
+                HttpLoggingInterceptor.Level.NONE
         }
-        return okHttpClient!!
+        val headerInterceptor = HeaderInterceptor { cachedApiKey }
+        return OkHttpClient.Builder()
+            .addInterceptor(logging)
+            .addInterceptor(headerInterceptor)
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .build()
     }
 
     /**

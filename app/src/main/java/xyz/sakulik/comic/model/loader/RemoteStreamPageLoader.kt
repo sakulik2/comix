@@ -26,6 +26,8 @@ class RemoteStreamPageLoader(
 
     override suspend fun getPageCount(): Int = totalPages
 
+    override suspend fun getPageSize(pageIndex: Int): Pair<Int, Int>? = null
+
     override suspend fun getPageData(pageIndex: Int, width: Int, height: Int): Any? {
         val cacheFile = File(cacheDir, "p$pageIndex.webp")
         

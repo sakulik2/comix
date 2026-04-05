@@ -26,6 +26,8 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.res.painterResource
 import xyz.sakulik.comic.R
 import xyz.sakulik.comic.model.loader.ComicPageLoader
+import xyz.sakulik.comic.model.loader.ReaderLayoutManager
+import xyz.sakulik.comic.model.loader.RenderBlock
 import xyz.sakulik.comic.ui.components.ComicPageItem
 import xyz.sakulik.comic.ui.components.WebtoonReader
 import xyz.sakulik.comic.viewmodel.ReaderMode
@@ -77,6 +79,17 @@ fun ReaderScreen(
         readerMode
     }
 
+    // 辅助状态：布局管理器
+    val layoutManager = remember(loader, pageCount, readerMode) { ReaderLayoutManager(loader) }
+    var isLayoutReady by remember { mutableStateOf(false) }
+
+    // 计算布局
+    LaunchedEffect(loader, pageCount, effectiveReaderMode) {
+        isLayoutReady = false
+        layoutManager.computeLayout(pageCount, effectiveReaderMode)
+        isLayoutReady = true
+    }
+
     // 页码断存
     val savedPage = androidx.compose.runtime.saveable.rememberSaveable(
         saver = androidx.compose.runtime.saveable.Saver(
@@ -85,33 +98,41 @@ fun ReaderScreen(
         )
     ) { mutableIntStateOf(initialPage) }
 
-    val pagerPageCount = when (effectiveReaderMode) {
-        ReaderMode.DUAL_PAGE -> (pageCount + 1) / 2
-        else -> pageCount
-    }
+    val pagerPageCount = if (isLayoutReady) layoutManager.getBlockCount() else 0
 
-    val pagerState = rememberPagerState(
-        initialPage = when (effectiveReaderMode) {
-            ReaderMode.DUAL_PAGE -> savedPage.intValue / 2
-            else -> savedPage.intValue
-        },
-        pageCount = { pagerPageCount }
-    )
-    
-    // 同步 Pager 进度到断存点与外部
-    LaunchedEffect(pagerState.currentPage, effectiveReaderMode) {
-        val targetPage = when (effectiveReaderMode) {
-            ReaderMode.DUAL_PAGE -> (pagerState.currentPage * 2).coerceAtMost(pageCount - 1)
-            else -> pagerState.currentPage
+    val pagerState = if (effectiveReaderMode != ReaderMode.WEBTOON) {
+        rememberPagerState(
+            initialPage = 0, // 初始先设为0，通过下面的 LaunchedEffect 跳转
+            pageCount = { pagerPageCount }
+        )
+    } else null
+
+    // 初始化跳转到断存点所在的 Block
+    if (pagerState != null) {
+        LaunchedEffect(isLayoutReady) {
+            if (isLayoutReady) {
+                val targetBlock = layoutManager.getBlockIndexForPage(savedPage.intValue)
+                pagerState.scrollToPage(targetBlock)
+            }
         }
-        if (savedPage.intValue != targetPage) {
-            savedPage.intValue = targetPage
-            onPageChanged(targetPage)
+
+        // 同步 Pager 进度到断存点与外部
+        LaunchedEffect(pagerState.currentPage, isLayoutReady, effectiveReaderMode) {
+            if (!isLayoutReady) return@LaunchedEffect
+            val targetPage = layoutManager.getFirstPageForBlock(pagerState.currentPage)
+
+            if (savedPage.intValue != targetPage) {
+                savedPage.intValue = targetPage
+                onPageChanged(targetPage)
+            }
         }
     }
 
     // 如果为 ture 说明内部 ZoomImage 被拉大了，拦截翻页
     var isUserInteractionBlocked by remember { mutableStateOf(false) }
+
+    // Webtoon 模式下由进度条/跳页对话框触发的滚动目标
+    var webtoonScrollTarget by remember { mutableStateOf<Int?>(null) }
 
     val layoutDirection = if (isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
 
@@ -119,80 +140,75 @@ fun ReaderScreen(
         .fillMaxSize()
         .background(Color.Black)) { 
         
-        when (readerMode) {
-            ReaderMode.PAGER -> {
-                CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
-                    HorizontalPager(
-                        state = pagerState,
-                        modifier = Modifier.fillMaxSize(),
-                        beyondViewportPageCount = 2,
-                        userScrollEnabled = !isUserInteractionBlocked 
-                    ) { page ->
-                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                            ComicPageItem(
-                                loader = loader,
-                                pageIndex = page,
-                                onScaleChanged = { scale -> 
-                                    isUserInteractionBlocked = scale > 1.05f 
-                                },
-                                onTap = { onToggleImmersive(!isImmersive) }
-                            )
-                        }
-                    }
-                }
+        if (!isLayoutReady) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
             }
-            ReaderMode.DUAL_PAGE -> {
-                CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
-                    HorizontalPager(
-                        state = pagerState,
+        } else if (readerMode == ReaderMode.WEBTOON) {
+            WebtoonReader(
+                loader = loader,
+                pageCount = pageCount,
+                initialPage = savedPage.intValue,
+                onPageChanged = { page ->
+                    savedPage.intValue = page
+                    onPageChanged(page)
+                },
+                onTap = { onToggleImmersive(!isImmersive) },
+                scrollToPage = webtoonScrollTarget
+            )
+        } else {
+            CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
+                HorizontalPager(
+                    state = pagerState!!,
+                    modifier = Modifier.fillMaxSize(),
+                    beyondViewportPageCount = 1,
+                    userScrollEnabled = !isUserInteractionBlocked
+                ) { blockIndex ->
+                    val block = layoutManager.getBlocks().getOrNull(blockIndex) ?: return@HorizontalPager
+                    
+                    // 统一手势容器：支持单双页作为一个整体进行缩放
+                    xyz.sakulik.comic.ui.components.ZoomableBox(
                         modifier = Modifier.fillMaxSize(),
-                        beyondViewportPageCount = 1,
-                        userScrollEnabled = !isUserInteractionBlocked
-                    ) { page ->
-                        Row(modifier = Modifier.fillMaxSize()) {
-                            val leftIdx = page * 2
-                            val rightIdx = page * 2 + 1
-                            
-                            // RTL 逻辑：物理上的左边应该是逻辑上的后一页，右边是前一页
-                            // 但 Compose HorizontalPager 已经反转了 Row 的顺序（通过 layoutDirection）
-                            // 所以这里依然按顺序布局即可，Pager 会替我们排版
-                            
-                            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                                ComicPageItem(
-                                    loader = loader,
-                                    pageIndex = leftIdx,
-                                    onScaleChanged = { isUserInteractionBlocked = it > 1.05f },
-                                    onTap = { onToggleImmersive(!isImmersive) }
-                                )
-                            }
-                            if (rightIdx < pageCount) {
-                                Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                        onScaleChanged = { isUserInteractionBlocked = it > 1.05f },
+                        onTap = { onToggleImmersive(!isImmersive) }
+                    ) {
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            when (block) {
+                                is RenderBlock.Single -> {
                                     ComicPageItem(
                                         loader = loader,
-                                        pageIndex = rightIdx,
-                                        onScaleChanged = { isUserInteractionBlocked = it > 1.05f },
-                                        onTap = { onToggleImmersive(!isImmersive) }
+                                        pageIndex = block.pageIndex,
+                                        onScaleChanged = {}, // 缩放由外层 Box 接管
+                                        onTap = {},
+                                        enableZoom = false // 禁用单页内部缩放
                                     )
                                 }
-                            } else {
-                                // 最后一页单数补白
-                                Spacer(modifier = Modifier.weight(1f))
+                                is RenderBlock.Pair -> {
+                                    Row(modifier = Modifier.fillMaxSize()) {
+                                        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                            ComicPageItem(
+                                                loader = loader,
+                                                pageIndex = block.leftIndex,
+                                                onScaleChanged = {},
+                                                onTap = {},
+                                                enableZoom = false
+                                            )
+                                        }
+                                        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                            ComicPageItem(
+                                                loader = loader,
+                                                pageIndex = block.rightIndex,
+                                                onScaleChanged = {},
+                                                onTap = {},
+                                                enableZoom = false
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
-            }
-            ReaderMode.WEBTOON -> {
-                WebtoonReader(
-                    loader = loader,
-                    pageCount = pageCount,
-                    initialPage = savedPage.intValue,
-                    onPageChanged = { page ->
-                        savedPage.intValue = page
-                        onPageChanged(page)
-                    },
-                    onTap = { onToggleImmersive(!isImmersive) }
-                )
             }
         }
         
@@ -264,8 +280,11 @@ fun ReaderScreen(
                         val target = jumpInput.toIntOrNull()?.minus(1)
                         if (target != null && target in 0 until pageCount) {
                             savedPage.intValue = target
-                            if (readerMode == ReaderMode.PAGER) {
-                                coroutineScope.launch { pagerState.animateScrollToPage(target) }
+                            if (effectiveReaderMode == ReaderMode.WEBTOON) {
+                                webtoonScrollTarget = target
+                            } else {
+                                val blockIndex = layoutManager.getBlockIndexForPage(target)
+                                pagerState?.let { coroutineScope.launch { it.animateScrollToPage(blockIndex) } }
                             }
                             showJumpDialog = false
                         }
@@ -317,8 +336,11 @@ fun ReaderScreen(
                             savedPage.intValue = it.toInt()
                         },
                         onValueChangeFinished = {
-                            if (readerMode == ReaderMode.PAGER) {
-                                coroutineScope.launch { pagerState.animateScrollToPage(savedPage.intValue) }
+                            if (effectiveReaderMode == ReaderMode.WEBTOON) {
+                                webtoonScrollTarget = savedPage.intValue
+                            } else {
+                                val blockIndex = layoutManager.getBlockIndexForPage(savedPage.intValue)
+                                pagerState?.let { coroutineScope.launch { it.animateScrollToPage(blockIndex) } }
                             }
                         },
                         valueRange = 0f..(pageCount - 1).coerceAtLeast(1).toFloat(),

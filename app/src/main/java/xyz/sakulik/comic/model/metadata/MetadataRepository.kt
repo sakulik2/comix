@@ -51,14 +51,18 @@ class MetadataRepository(private val context: Context) {
             ScrapeStrategy.COMIC_VINE_ONLY -> fetchVine()
             ScrapeStrategy.BANGUMI_ONLY -> fetchBangumi()
             ScrapeStrategy.SMART_FALLBACK -> {
-                fetchVine() 
-                if (results.isEmpty()) { 
-                    fetchBangumi() 
-                }
+                fetchVine()
+                fetchBangumi()
             }
         }
         
-        return@withContext results
+        val deduplicated = if (strategy == ScrapeStrategy.SMART_FALLBACK) {
+            results.distinctBy { it.title }
+        } else {
+            results
+        }
+        
+        return@withContext deduplicated
     }
 
     /**

@@ -1,11 +1,14 @@
 package xyz.sakulik.comic.ui.bookshelf
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.lazy.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
@@ -40,6 +43,7 @@ fun BookshelfScreen(
     viewModel: BookshelfViewModel,
     onComicClick: (ComicEntity) -> Unit,
     onSeriesClick: (SeriesGroupData) -> Unit,
+    onCollectionClick: (xyz.sakulik.comic.model.db.CollectionEntity) -> Unit,
     onSettingsClick: () -> Unit,
     onManualScrapeClick: (ComicEntity) -> Unit
 ) {
@@ -50,12 +54,19 @@ fun BookshelfScreen(
     val selectedRegion by viewModel.selectedRegionFilter.collectAsState()
     val autoScrapeState by viewModel.autoScrapeState.collectAsState()
     val remoteEnabled by viewModel.remoteEnabled.collectAsState()
+    val collections by viewModel.collections.collectAsState()
 
     var showSortMenu by remember { mutableStateOf(false) }
     var showAddMenu by remember { mutableStateOf(false) }
     var showApiDialog by remember { mutableStateOf(false) }
     var contextComic by remember { mutableStateOf<ComicEntity?>(null) }
     var showDeleteOptions by remember { mutableStateOf(false) }
+    var showMetadataOptions by remember { mutableStateOf(false) }
+    var showMetadataDialog by remember { mutableStateOf<ComicEntity?>(null) }
+    var showAddToCollectionDialog by remember { mutableStateOf<ComicEntity?>(null) }
+    var showCreateCollectionDialog by remember { mutableStateOf(false) }
+    var showEditorDialog by remember { mutableStateOf<ComicEntity?>(null) }
+    var showCollectionRenameDialog by remember { mutableStateOf<xyz.sakulik.comic.model.db.CollectionEntity?>(null) }
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -238,6 +249,33 @@ fun BookshelfScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
+                    // ======= 合集板块 (仅在未搜索时显示) =======
+                    if (collections.isNotEmpty() && searchQuery.isEmpty()) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Column(modifier = Modifier.padding(bottom = 8.dp)) {
+                                Text(
+                                    "我的合集",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(bottom = 12.dp)
+                                )
+                                LazyRow(
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 4.dp)
+                                ) {
+                                    items(collections) { colWithComics ->
+                                        CollectionSwimlaneItem(
+                                            collection = colWithComics,
+                                            onClick = { onCollectionClick(colWithComics.collection) },
+                                            onLongClick = { showCollectionRenameDialog = colWithComics.collection }
+                                        )
+                                    }
+                                }
+                                HorizontalDivider(modifier = Modifier.padding(top = 16.dp, bottom = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))
+                            }
+                        }
+                    }
+
                     items(items) { item ->
                         when(item) {
                             is BookshelfItem.SingleComic -> {
@@ -254,6 +292,9 @@ fun BookshelfScreen(
                                     onClick = { onSeriesClick(item.group) },
                                     onLongClick = { contextComic = item.group.coverComic }
                                 )
+                            }
+                            is BookshelfItem.Collection -> {
+                                // Collections are handled separately above, this should not happen
                             }
                         }
                     }
@@ -311,19 +352,17 @@ fun BookshelfScreen(
                 HorizontalDivider()
                 Spacer(Modifier.height(8.dp))
 
+                // 核心阅读操作 (恢复原样)
                 ListItem(
                     headlineContent = { Text("从头开始", style = MaterialTheme.typography.bodyLarge) },
                     supportingContent = { Text("清除当前阅读进度并返回第一页", style = MaterialTheme.typography.labelSmall) },
                     leadingContent = {
                         Surface(color = MaterialTheme.colorScheme.tertiaryContainer, shape = RoundedCornerShape(12.dp)) {
-                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.padding(8.dp).size(20.dp), tint = MaterialTheme.colorScheme.onTertiaryContainer)
+                            Icon(Icons.Default.Refresh, null, modifier = Modifier.padding(8.dp).size(20.dp), tint = MaterialTheme.colorScheme.onTertiaryContainer)
                         }
                     },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .clickable { viewModel.resetComicProgress(comic); contextComic = null }
+                    modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable { viewModel.resetComicProgress(comic); contextComic = null },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                 )
                 
                 ListItem(
@@ -331,36 +370,70 @@ fun BookshelfScreen(
                     supportingContent = { Text("AI 智能匹配补全封面与详情", style = MaterialTheme.typography.labelSmall) },
                     leadingContent = {
                         val isScraping = autoScrapeState is AutoScrapeState.Loading && (autoScrapeState as AutoScrapeState.Loading).comicId == comic.id
-                        if (isScraping) {
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
-                        } else {
-                            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(12.dp)) {
-                                Icon(painterResource(R.drawable.ic_auto_awesome), contentDescription = null, modifier = Modifier.padding(8.dp).size(20.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
-                            }
+                        if (isScraping) CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                        else Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(12.dp)) {
+                            Icon(painterResource(R.drawable.ic_auto_awesome), null, modifier = Modifier.padding(8.dp).size(20.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
                         }
                     },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .clickable { viewModel.autoScrape(comic); contextComic = null }
+                    modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable { viewModel.autoScrape(comic); contextComic = null },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                 )
 
                 ListItem(
-                    headlineContent = { Text("搜索元数据", style = MaterialTheme.typography.bodyLarge) },
-                    supportingContent = { Text("精确检索 ComicVine 数据库", style = MaterialTheme.typography.labelSmall) },
+                    headlineContent = { Text("加入合集", style = MaterialTheme.typography.bodyLarge) },
+                    supportingContent = { Text("将此漫画分类到您的手动合集中", style = MaterialTheme.typography.labelSmall) },
                     leadingContent = {
-                        Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(12.dp)) {
-                            Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.padding(8.dp).size(20.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                        Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(12.dp)) {
+                            Icon(Icons.Default.LibraryAdd, null, modifier = Modifier.padding(8.dp).size(20.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
                         }
                     },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .clickable { onManualScrapeClick(comic); contextComic = null }
+                    modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable { showAddToCollectionDialog = comic; contextComic = null },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                 )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // [优化：折叠式元数据管理]
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.2f),
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.fillMaxWidth().animateContentSize()
+                ) {
+                    Column {
+                        ListItem(
+                            headlineContent = { Text("元数据管理", style = MaterialTheme.typography.bodyLarge) },
+                            supportingContent = { Text("查看详情、手动搜索或编辑字段", style = MaterialTheme.typography.labelSmall) },
+                            leadingContent = { Icon(Icons.AutoMirrored.Filled.ManageSearch, null, tint = MaterialTheme.colorScheme.secondary) },
+                            trailingContent = { Icon(if (showMetadataOptions) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
+                            modifier = Modifier.clickable { showMetadataOptions = !showMetadataOptions },
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                        )
+                        
+                        if (showMetadataOptions) {
+                            Column(Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp)) {
+                                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f))
+                                ListItem(
+                                    headlineContent = { Text("查看详细元数据", style = MaterialTheme.typography.bodyMedium) },
+                                    leadingContent = { Icon(Icons.Default.Info, null, modifier = Modifier.size(18.dp)) },
+                                    modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { showMetadataDialog = comic; contextComic = null },
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                                )
+                                ListItem(
+                                    headlineContent = { Text("搜索元数据", style = MaterialTheme.typography.bodyMedium) },
+                                    leadingContent = { Icon(Icons.Default.Search, null, modifier = Modifier.size(18.dp)) },
+                                    modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { onManualScrapeClick(comic); contextComic = null },
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                                )
+                                ListItem(
+                                    headlineContent = { Text("手动编辑字段", style = MaterialTheme.typography.bodyMedium) },
+                                    leadingContent = { Icon(Icons.Default.Edit, null, modifier = Modifier.size(18.dp)) },
+                                    modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { showEditorDialog = comic; contextComic = null },
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                                )
+                            }
+                        }
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
@@ -452,6 +525,10 @@ fun BookshelfScreen(
         }
     }
 
+    showMetadataDialog?.let { comic ->
+        ComicMetadataDialog(comic = comic, onDismiss = { showMetadataDialog = null })
+    }
+
     if (showApiDialog) {
         var inputUrl by remember { mutableStateOf("https://comix.sakulik.xyz/") }
         AlertDialog(
@@ -467,7 +544,7 @@ fun BookshelfScreen(
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         placeholder = { Text("http://api..") },
-                        leadingIcon = { Icon(painterResource(R.drawable.ic_link), contentDescription = null) }
+                        leadingIcon = { Icon(painterResource(id = xyz.sakulik.comic.R.drawable.ic_link), contentDescription = null) }
                     )
                 }
             },
@@ -489,6 +566,79 @@ fun BookshelfScreen(
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
             shape = RoundedCornerShape(28.dp)
         )
+    }
+
+    // ======= 合集对话框调用 =======
+
+    showAddToCollectionDialog?.let { comic ->
+        AddToCollectionDialog(
+            collections = collections,
+            onDismiss = { showAddToCollectionDialog = null },
+            onCollectionSelected = { coll ->
+                viewModel.addComicToCollection(coll.id, comic.id)
+                showAddToCollectionDialog = null
+            },
+            onCreateNewCollection = {
+                showAddToCollectionDialog = null
+                showCreateCollectionDialog = true
+            }
+        )
+    }
+
+    if (showCreateCollectionDialog) {
+        CreateCollectionDialog(
+            onDismiss = { showCreateCollectionDialog = false },
+            onConfirm = { name ->
+                viewModel.createCollection(name)
+                showCreateCollectionDialog = false
+            }
+        )
+    }
+
+    showCollectionRenameDialog?.let { collection ->
+        RenameCollectionDialog(
+            currentName = collection.name,
+            onDismiss = { showCollectionRenameDialog = null },
+            onConfirm = { newName ->
+                viewModel.renameCollection(collection.id, newName)
+                showCollectionRenameDialog = null
+            },
+            onDelete = {
+                viewModel.deleteCollection(collection)
+                showCollectionRenameDialog = null
+            }
+        )
+    }
+
+    showEditorDialog?.let { comic ->
+        ComicEditorDialog(
+            comic = comic,
+            onDismiss = { showEditorDialog = null },
+            onSave = { updatedComic ->
+                viewModel.updateComicMetadata(updatedComic)
+                showEditorDialog = null
+            }
+        )
+    }
+}
+
+@Composable
+fun QuickActionItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, color: Color, onClick: () -> Unit) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(8.dp)
+    ) {
+        Surface(
+            color = color.copy(alpha = 0.15f),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.size(56.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = color, modifier = Modifier.size(24.dp))
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
     }
 }
 
@@ -742,4 +892,317 @@ fun SeriesHeader(group: SeriesGroupData) {
             )
         }
     }
+}
+
+@Composable
+fun ComicMetadataDialog(comic: ComicEntity, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(comic.remark ?: comic.title, style = MaterialTheme.typography.titleLarge) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (comic.remark != null) {
+                    MetadataItem("备注名", comic.remark)
+                }
+                MetadataItem("原始标题", comic.title)
+                MetadataItem("系列", comic.seriesName)
+                MetadataItem("出版年份", comic.year)
+                MetadataItem("出版社", comic.publisher)
+                MetadataItem("创作者", comic.authors)
+                MetadataItem("类型", comic.genres)
+                MetadataItem("分级", comic.rating?.toString())
+                MetadataItem("页数", "${comic.totalPages}P")
+                MetadataItem("路径", comic.location)
+                
+                if (!comic.summary.isNullOrBlank()) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    Text("剧情简介", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    Text(comic.summary, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("确定") }
+        },
+        shape = RoundedCornerShape(28.dp),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+    )
+}
+
+@Composable
+fun ComicEditorDialog(
+    comic: ComicEntity,
+    onDismiss: () -> Unit,
+    onSave: (ComicEntity) -> Unit
+) {
+    var remark by remember { mutableStateOf(comic.remark ?: "") }
+    var title by remember { mutableStateOf(comic.title) }
+    var series by remember { mutableStateOf(comic.seriesName) }
+    var authors by remember { mutableStateOf(comic.authors ?: "") }
+    var year by remember { mutableStateOf(comic.year ?: "") }
+    var summary by remember { mutableStateOf(comic.summary ?: "") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("编辑详细信息") },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(painterResource(R.drawable.ic_auto_awesome), null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                    TextButton(onClick = {
+                        val cleaned = xyz.sakulik.comic.model.metadata.FilenameCleaner.clean(comic.title)
+                        title = cleaned
+                    }) { Text("从文件名提取标题", style = MaterialTheme.typography.labelSmall) }
+                }
+
+                OutlinedTextField(value = remark, onValueChange = { remark = it }, label = { Text("书架备注名") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("原始标题") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = series, onValueChange = { series = it }, label = { Text("所属系列") }, modifier = Modifier.fillMaxWidth())
+                
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = year, onValueChange = { year = it }, label = { Text("年份") }, modifier = Modifier.weight(1f))
+                    OutlinedTextField(value = authors, onValueChange = { authors = it }, label = { Text("作者") }, modifier = Modifier.weight(2f))
+                }
+
+                OutlinedTextField(value = summary, onValueChange = { summary = it }, label = { Text("剧情简介") }, modifier = Modifier.fillMaxWidth(), minLines = 3)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { 
+                onSave(comic.copy(
+                    remark = remark.takeIf { it.isNotBlank() }, 
+                    title = title, 
+                    seriesName = series,
+                    authors = authors.takeIf { it.isNotBlank() },
+                    year = year.takeIf { it.isNotBlank() },
+                    summary = summary.takeIf { it.isNotBlank() }
+                )) 
+            }) { Text("保存") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
+@Composable
+private fun MetadataItem(label: String, value: String?) {
+    if (value.isNullOrBlank()) return
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+        Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+    }
+}
+
+// ======= 合集管理相关组件 (Phase 3) =======
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+fun CollectionSwimlaneItem(
+    collection: xyz.sakulik.comic.model.db.CollectionWithComics,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
+            .width(160.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            val coverComic = collection.comics.firstOrNull { it.id == collection.collection.coverComicId } 
+                ?: collection.comics.firstOrNull()
+            
+            val model = when {
+                coverComic?.source == ComicSource.REMOTE -> coverComic.coverCachePath
+                coverComic?.coverCachePath != null && File(coverComic.coverCachePath).exists() -> File(coverComic.coverCachePath)
+                else -> null
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                if (model != null) {
+                    AsyncImage(
+                        model = model,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Icon(
+                        Icons.Default.CollectionsBookmark,
+                        contentDescription = null,
+                        modifier = Modifier.align(Alignment.Center).size(32.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
+                }
+                
+                Surface(
+                    color = MaterialTheme.colorScheme.primary,
+                    shape = RoundedCornerShape(topStart = 8.dp),
+                    modifier = Modifier.align(Alignment.BottomEnd)
+                ) {
+                    Text(
+                        "${collection.comics.size} 册",
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                }
+            }
+            
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = collection.collection.name,
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                fontWeight = FontWeight.Medium
+            )
+        }
+    }
+}
+
+@Composable
+fun AddToCollectionDialog(
+    collections: List<xyz.sakulik.comic.model.db.CollectionWithComics>,
+    onDismiss: () -> Unit,
+    onCollectionSelected: (xyz.sakulik.comic.model.db.CollectionEntity) -> Unit,
+    onCreateNewCollection: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("加入合集") },
+        text = {
+            if (collections.isEmpty()) {
+                Text("您还没有创建任何合集")
+            } else {
+                LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                    items(collections) { item ->
+                        ListItem(
+                            headlineContent = { Text(item.collection.name) },
+                            leadingContent = { Icon(Icons.Default.Folder, null) },
+                            modifier = Modifier.clickable { onCollectionSelected(item.collection) }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onCreateNewCollection) {
+                Text("新建合集")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        },
+        shape = RoundedCornerShape(28.dp)
+    )
+}
+
+@Composable
+fun CreateCollectionDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("新建合集") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("合集名称") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (name.isNotBlank()) onConfirm(name) },
+                enabled = name.isNotBlank()
+            ) {
+                Text("创建")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        },
+        shape = RoundedCornerShape(28.dp)
+    )
+}
+
+@Composable
+fun RenameCollectionDialog(
+    currentName: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+    onDelete: () -> Unit
+) {
+    var name by remember { mutableStateOf(currentName) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("删除合集", color = MaterialTheme.colorScheme.error) },
+            text = { Text("确定要删除合集《$currentName》吗？这不会删除合集内的漫画文件。") },
+            confirmButton = {
+                TextButton(onClick = onDelete) { Text("确认删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) { Text("取消") }
+            }
+        )
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("管理合集") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("合集名称") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (name.isNotBlank()) onConfirm(name) },
+                enabled = name.isNotBlank() && name != currentName
+            ) {
+                Text("重命名")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { showDeleteConfirm = true }) {
+                Text("删除合集", color = MaterialTheme.colorScheme.error)
+            }
+        }
+    )
 }

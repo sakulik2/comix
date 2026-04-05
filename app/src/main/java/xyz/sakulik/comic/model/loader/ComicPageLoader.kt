@@ -22,6 +22,12 @@ interface ComicPageLoader {
     suspend fun getPageData(pageIndex: Int, width: Int, height: Int): Any?
 
     /**
+     * 获取指定页面的物理像素尺寸 (Width, Height)
+     * 用于跨页检测算法，应尽可能实现为仅读取 Header 而不解码像素的快路径
+     */
+    suspend fun getPageSize(pageIndex: Int): Pair<Int, Int>?
+
+    /**
      * 生命周期释放钩子：当页面被滑出屏幕或回收时由 UI 调用
      * 允许加载引擎将显存资源归还池中进行复用
      */

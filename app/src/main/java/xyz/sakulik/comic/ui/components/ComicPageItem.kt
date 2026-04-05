@@ -13,9 +13,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import coil.compose.AsyncImage
 import xyz.sakulik.comic.model.loader.ComicPageLoader
 import xyz.sakulik.comic.ui.ZoomableImage
@@ -29,7 +30,8 @@ fun ComicPageItem(
     loader: ComicPageLoader, 
     pageIndex: Int, 
     onScaleChanged: (Float) -> Unit, 
-    onTap: () -> Unit
+    onTap: () -> Unit,
+    enableZoom: Boolean = true
 ) {
     val context = LocalContext.current
     var pageData by remember { mutableStateOf<Any?>(null) }
@@ -72,11 +74,20 @@ fun ComicPageItem(
                 CircularProgressIndicator()
             }
             is Bitmap -> {
-                ZoomableImage(
-                    bitmap = data,
-                    onScaleChanged = onScaleChanged,
-                    onTap = onTap
-                )
+                if (enableZoom) {
+                    ZoomableImage(
+                        bitmap = data,
+                        onScaleChanged = onScaleChanged,
+                        onTap = onTap
+                    )
+                } else {
+                    androidx.compose.foundation.Image(
+                        bitmap = data.asImageBitmap(),
+                        contentDescription = "漫画页",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit
+                    )
+                }
             }
             is String -> {
                 // 云端模式：直接使用 Coil 加载 URL

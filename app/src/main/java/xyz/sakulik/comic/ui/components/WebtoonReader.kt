@@ -21,10 +21,18 @@ fun WebtoonReader(
     initialPage: Int,
     onPageChanged: (Int) -> Unit,
     onTap: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    scrollToPage: Int? = null
 ) {
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialPage)
-    
+
+    // 响应外部滚动指令（来自进度条/跳页对话框）
+    LaunchedEffect(scrollToPage) {
+        if (scrollToPage != null) {
+            listState.scrollToItem(scrollToPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0)))
+        }
+    }
+
     // 同步进度到外部
     LaunchedEffect(listState.firstVisibleItemIndex) {
         onPageChanged(listState.firstVisibleItemIndex)

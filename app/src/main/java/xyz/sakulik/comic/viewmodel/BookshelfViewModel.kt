@@ -60,19 +60,32 @@ sealed class BookshelfItem {
         val displayBadge: String? = null
     ) : BookshelfItem()
     data class SeriesGroup(val group: SeriesGroupData) : BookshelfItem()
+    data class Collection(val collection: xyz.sakulik.comic.model.db.CollectionWithComics) : BookshelfItem()
 }
 
 class BookshelfViewModel(
     application: Application,
-    private val dao: ComicDao,
+    private val dao: xyz.sakulik.comic.model.db.ComicDao,
+    private val collectionDao: xyz.sakulik.comic.model.db.CollectionDao,
     private val savedStateHandle: SavedStateHandle
 ) : AndroidViewModel(application) {
+
+    private val uselessKeywords = setOf(
+        "chapter", "ch", "volume", "vol", "issue", "part", "page", "pages",
+        "read", "online", "english", "raw", "scan", "digital", "complete"
+    )
 
     private val sharedOkHttpClient = OkHttpClient()
     
     init {
         // 冷启动即刻自动排查全部记录与图鉴，实现绝对同步
         scanAllFolders()
+        // 订阅 API Key 变更并同步推送给 RetrofitClient，使拦截器无需 runBlocking
+        viewModelScope.launch {
+            SettingsDataStore.getComicVineApiKeyFlow(application).collect { key ->
+                RetrofitClient.updateApiKey(key)
+            }
+        }
     }
     
     private val _sortOrder = savedStateHandle.getStateFlow("sortOrder", SortOrder.LAST_READ)
@@ -110,6 +123,10 @@ class BookshelfViewModel(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
+    // 合集数据流
+    val collections: StateFlow<List<xyz.sakulik.comic.model.db.CollectionWithComics>> = collectionDao.getAllCollectionsWithComics()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     /**
      * 将数据库流与搜索/过滤/排序状态组合，输出最终用于书架 UI 的内容列表
      * 运用 combine 并发结合数据库与多种交互参数
@@ -133,17 +150,22 @@ class BookshelfViewModel(
         val (regionFilter, formatFilter, remoteEnabled, metadataEnabled) = filters
         
         // 发掘底层原始列表
-        val sourceFlow = if (query.isNotBlank()) {
-            dao.searchComics(query)
-        } else {
-            when (order) {
-                SortOrder.LAST_READ -> dao.getAllComicsByLastReadFlow()
-                SortOrder.ADDED_TIME -> dao.getAllComicsByAddedTimeFlow()
-                SortOrder.TITLE_AZ -> dao.getAllComicsByTitleFlow()
+        val sourceFlow = when (order) {
+            SortOrder.ADDED_TIME -> dao.getAllComicsByAddedTimeFlow()
+            SortOrder.LAST_READ -> dao.getAllComicsByLastReadFlow() 
+            SortOrder.TITLE_AZ -> dao.getAllComicsByTitleFlow()
+        }.let { flow ->
+            if (query.isNotBlank()) {
+                // If there's a search query, use search instead
+                dao.searchComics(query)
+            } else {
+                flow
             }
         }
-
-        souceRefine(sourceFlow, regionFilter, formatFilter, remoteEnabled, metadataEnabled)
+        val filters = Triple(regionFilter, formatFilter, remoteEnabled)
+        val metadata = metadataEnabled
+        
+        sourceRefine(sourceFlow, regionFilter, formatFilter, remoteEnabled, metadata)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -151,9 +173,8 @@ class BookshelfViewModel(
     )
     
     // 私有提炼流水线装配工段
-    private fun souceRefine(sourceFlow: Flow<List<ComicEntity>>, regionFilter: ComicRegion?, formatFilter: ComicFormat?, remoteEnabled: Boolean, metadataEnabled: Boolean): Flow<List<BookshelfItem>> {
+    private fun sourceRefine(sourceFlow: Flow<List<ComicEntity>>, regionFilter: ComicRegion?, formatFilter: ComicFormat?, remoteEnabled: Boolean, metadataEnabled: Boolean): Flow<List<BookshelfItem>> {
         val formatsToStrip = listOf("HC - ", "SC - ", "TPB - ", "OHC - ", "Absolute ")
-        val uselessKeywords = setOf("hc", "sc", "tpb", "gn", "ohc")
 
         return sourceFlow.map { rawList ->
             //\ 1 处理过滤
@@ -189,12 +210,14 @@ class BookshelfViewModel(
                 when(it) {
                     is BookshelfItem.SingleComic -> it.comic.seriesName
                     is BookshelfItem.SeriesGroup -> it.group.seriesName
+                    is BookshelfItem.Collection -> "" // 合集不参与系列聚合重名统计
                 }
             }.mapValues { it.value.size }
 
             //\ 4 重构结果并计算所有 UI 展示所需标题与角标
             tempGroups.map { item ->
                 when (item) {
+                    is BookshelfItem.Collection -> item
                     is BookshelfItem.SingleComic -> {
                         val comic = item.comic
                         val sName = comic.seriesName
@@ -209,8 +232,11 @@ class BookshelfViewModel(
                             listOfNotNull(comic.year, comic.format.name.takeIf { it != "UNKNOWN" }).joinToString(", ")
                         } else null
 
-                        //\ 3 决定最终展示标题 (处理 Batman: Hush 这种系列名与标题重复的情况)
-                        val displayTitle = if (!sName.isNullOrBlank()) {
+                        //\ 3 决定最终展示标题
+                        // 优先级：用户备注 > 解析出的系列+期号 > 原始标题
+                        val displayTitle = if (!comic.remark.isNullOrBlank()) {
+                            comic.remark
+                        } else if (!sName.isNullOrBlank()) {
                             val sNorm = sName.lowercase().filter { it.isLetterOrDigit() }
                             val iNorm = cleanedITitle.lowercase().filter { it.isLetterOrDigit() }
                             val isUseless = uselessKeywords.contains(cleanedITitle.lowercase().trim())
@@ -300,6 +326,13 @@ class BookshelfViewModel(
 
     fun deleteComic(comic: ComicEntity) {
         viewModelScope.launch(Dispatchers.IO) {
+            // [安全清理] 数据库记录删除前，先清理关联的物理封面缓存，防止存储泄漏
+            comic.coverCachePath?.let { path ->
+                if (!path.startsWith("http")) { // 仅清理本地产生的缓存图
+                    val file = java.io.File(path)
+                    if (file.exists()) file.delete()
+                }
+            }
             dao.delete(comic)
         }
     }
@@ -309,6 +342,14 @@ class BookshelfViewModel(
      */
     fun deleteComicAndFile(comic: ComicEntity) {
         viewModelScope.launch(Dispatchers.IO) {
+            // [安全清理] 先清理封面缓存
+            comic.coverCachePath?.let { path ->
+                if (!path.startsWith("http")) {
+                    val file = java.io.File(path)
+                    if (file.exists()) file.delete()
+                }
+            }
+            
             if (comic.source == ComicSource.LOCAL) {
                 try {
                     val uri = Uri.parse(comic.location)
@@ -318,19 +359,18 @@ class BookshelfViewModel(
                         if (doc?.exists() == true) {
                             val success = doc.delete()
                             if (!success) {
-                                Log.e("BookshelfOps", "Physical delete failed for SAF Uri: $uri")
-                                // 即使物理删除失败，也可能需要向 UI 反馈，暂先记录日志
+                                android.util.Log.e("BookshelfOps", "Physical delete failed for SAF Uri: $uri")
                             }
                         }
                     } else if (uri.scheme == "file" || comic.location.startsWith("/")) {
                         val path = uri.path ?: comic.location
-                        val file = File(path)
+                        val file = java.io.File(path)
                         if (file.exists()) {
                             file.delete()
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e("BookshelfOps", "Error deleting physical file: ${e.message}", e)
+                    android.util.Log.e("BookshelfOps", "Error deleting physical file: ${e.message}", e)
                 }
             }
             // 无论物理文件删除是否成功，都从数据库中剥离索引，防止重复加载死循环
@@ -436,6 +476,60 @@ class BookshelfViewModel(
             withContext(Dispatchers.IO) {
                 dao.deleteComicsBySource(ComicSource.REMOTE)
             }
+        }
+    }
+
+    // ======= 合集管理逻辑 (Phase 3) =======
+
+    fun createCollection(name: String) {
+        viewModelScope.launch {
+            val collection = xyz.sakulik.comic.model.db.CollectionEntity(name = name)
+            collectionDao.insertCollection(collection)
+        }
+    }
+
+    fun deleteCollection(collection: xyz.sakulik.comic.model.db.CollectionEntity) {
+        viewModelScope.launch {
+            collectionDao.deleteCollection(collection)
+        }
+    }
+
+    fun addComicToCollection(collectionId: Long, comicId: Long) {
+        viewModelScope.launch {
+            collectionDao.addComicToCollection(xyz.sakulik.comic.model.db.CollectionComicCrossRef(collectionId, comicId))
+        }
+    }
+
+    fun removeComicFromCollection(collectionId: Long, comicId: Long) {
+        viewModelScope.launch {
+            collectionDao.removeComicFromCollection(collectionId, comicId)
+        }
+    }
+
+    fun renameCollection(id: Long, newName: String) {
+        viewModelScope.launch {
+            collectionDao.updateCollectionName(id, newName)
+        }
+    }
+
+    fun updateCollectionCover(id: Long, comicId: Long) {
+        viewModelScope.launch {
+            collectionDao.updateCollectionCover(id, comicId)
+        }
+    }
+
+    fun updateComicRemark(id: Long, remark: String) {
+        viewModelScope.launch {
+            dao.updateRemark(id, remark)
+        }
+    }
+
+    /**
+     * 更新漫画的所有元数据字段
+     */
+    fun updateComicMetadata(comic: ComicEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            dao.update(comic)
         }
     }
 }

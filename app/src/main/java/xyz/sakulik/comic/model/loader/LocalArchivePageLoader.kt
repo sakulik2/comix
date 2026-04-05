@@ -48,6 +48,9 @@ class LocalArchivePageLoader(
     // 已提取的页面映射：PageIndex -> TempFile
     private val extractedFiles = ConcurrentHashMap<Int, File>()
     
+    // 页面原始像素尺寸缓存：PageIndex -> (Width, Height) [核心性能优化]
+    private val pageDimensionsCache = ConcurrentHashMap<Int, Pair<Int, Int>>()
+    
     // content:// URI 的本地镜像文件，用于支持 RAR/ZIP 随机访问
     private var sessionMirror: File? = null
     @Volatile private var isMirrorReady = false
@@ -144,8 +147,58 @@ class LocalArchivePageLoader(
         activeSortedHeaders = null
     }
 
-    protected fun finalize() {
-        closeActiveSession()
+
+
+    override suspend fun getPageSize(pageIndex: Int): Pair<Int, Int>? = withContext(Dispatchers.IO) {
+        // [超级极速路径] 命中内存缓存直接返回
+        pageDimensionsCache[pageIndex]?.let { return@withContext it }
+
+        // [极速路径] 从已经提取好的本地临时图片中解析尺寸
+        extractedFiles[pageIndex]?.let { file ->
+            if (file.exists()) {
+                val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(file.absolutePath, opts)
+                if (opts.outWidth > 0) {
+                    val res = opts.outWidth to opts.outHeight
+                    pageDimensionsCache[pageIndex] = res
+                    return@withContext res
+                }
+            }
+        }
+
+        // [标准路径] 从原始档案（NIO/Mirror）中读取图片头部信息
+        val stream = if (extension.lowercase() in listOf("cbz", "zip")) {
+            // [并行优化] ZIP 格式支持并行读取，无需抢占全局锁
+            ensureActiveSession()
+            val headers = activeSortedHeaders
+            if (headers != null && pageIndex in headers.indices) {
+                val entry = headers[pageIndex] as String
+                activeZipFile?.let { zip ->
+                    zip.getEntry(entry)?.let { zip.getInputStream(it) }
+                } ?: activeZipIndexer?.getEntryInputStream(entry)
+            } else null
+        } else {
+            // RAR 格式 Junrar 不支持并发，维持互斥锁锁定
+            archiveMutex.withLock {
+                if (ensureActiveSession()) {
+                    val headers = activeSortedHeaders
+                    if (headers != null && pageIndex in headers.indices) {
+                        activeRarArchive?.getInputStream(headers[pageIndex] as com.github.junrar.rarfile.FileHeader)
+                    } else null
+                } else null
+            }
+        }
+        
+        stream?.use { 
+            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeStream(it, null, opts)
+            if (opts.outWidth > 0) {
+                val res = opts.outWidth to opts.outHeight
+                pageDimensionsCache[pageIndex] = res
+                return@withContext res
+            }
+        }
+        null
     }
 
     private fun obtainBitmap(w: Int, h: Int, config: Bitmap.Config): Bitmap {
@@ -171,7 +224,8 @@ class LocalArchivePageLoader(
     private fun releaseBitmap(bitmap: Bitmap?) {
         if (bitmap == null || bitmap.isRecycled) return
         synchronized(bitmapPool) {
-            if (bitmapPool.size < 5) {
+            // [性能优化] 提升池容量至 12，支持双页模式下的 翻页预览 + 内存复用
+            if (bitmapPool.size < 12) {
                 bitmapPool.add(bitmap)
             } else {
                 bitmap.recycle()
@@ -180,7 +234,7 @@ class LocalArchivePageLoader(
     }
 
     private suspend fun ensureSessionMirror(): File? {
-        if (isMirrorReady || isStreamingOnly) return sessionMirror
+        if (isMirrorReady || isStreamingOnly || activeChannel != null) return sessionMirror
         if (uri.scheme == "file") {
             sessionMirror = File(uri.path!!)
             isMirrorReady = true
@@ -194,8 +248,8 @@ class LocalArchivePageLoader(
                 try {
                     val fileSize = getUriSize(uri)
                     val available = getAvailableSpace()
-                    
-                    if (fileSize > 650L * 1024 * 1024 || available < fileSize + 500 * 1024 * 1024) {
+                    val HUGE_FILE_THRESHOLD = 650L * 1024 * 1024 // 650MB 作为强制流式模式的分水岭
+                    if (fileSize > HUGE_FILE_THRESHOLD || available < fileSize + 500 * 1024 * 1024) {
                         isStreamingOnly = true
                         android.util.Log.i("ArchiveLoader", "Storage pressure or large file ($fileSize bytes), skipping mirror.")
                         return@withLock null
@@ -266,7 +320,8 @@ class LocalArchivePageLoader(
                     if (count != null) return@withLock count
                     
                     val fSize = getUriSize(uri)
-                    if (fSize > 500 * 1024 * 1024) {
+                    val HUGE_FILE_THRESHOLD = 650L * 1024 * 1024
+                    if (fSize > HUGE_FILE_THRESHOLD) {
                         android.util.Log.e("ArchiveLoader", "NIO Session failed for HUGE file ($fSize bytes). Refusing sequential scan fallback to avoid UI lockup.")
                         return@withLock 0
                     }
@@ -739,21 +794,33 @@ class LocalArchivePageLoader(
 
     private inner class RarNioChannel(private val channel: FileChannel) : com.github.junrar.io.SeekableReadOnlyByteChannel {
         private var position: Long = 0
+        private val tinyBuf = ByteBuffer.allocate(8192) // 核心：8KB 预读缓冲区，避免单字节 I/O
+        private var bufPos: Long = -1L
+
         override fun getPosition(): Long = position
         override fun setPosition(pos: Long) { position = pos }
+
         override fun read(): Int {
-            val bb = ByteBuffer.allocate(1)
-            return if (channel.read(bb, position) <= 0) -1 else {
-                val b = bb.get(0).toInt() and 0xFF
-                position++
-                b
+            if (bufPos == -1L || position < bufPos || position >= bufPos + tinyBuf.limit()) {
+                tinyBuf.clear()
+                val read = channel.read(tinyBuf, position)
+                if (read <= 0) return -1
+                tinyBuf.flip()
+                bufPos = position
             }
+            val b = tinyBuf.get((position - bufPos).toInt()).toInt() and 0xFF
+            position++
+            return b
         }
+
         override fun read(buffer: ByteArray?, off: Int, count: Int): Int {
             if (buffer == null) return 0
             val bb = ByteBuffer.wrap(buffer, off, count)
             val read = channel.read(bb, position)
-            if (read > 0) position += read
+            if (read > 0) {
+                position += read
+                bufPos = -1L // Invalidate tiny buffer on large reads
+            }
             return read
         }
         override fun readFully(buffer: ByteArray, count: Int): Int {

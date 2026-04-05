@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import xyz.sakulik.comic.model.db.AppDatabase
 import xyz.sakulik.comic.model.db.ComicEntity
+import xyz.sakulik.comic.model.metadata.LocalComicInfoParser
 import java.io.File
 import java.util.UUID
 
@@ -64,13 +65,16 @@ class LibraryScanner(private val context: Context) {
 
                         // 给本地的 XML 外挂兜底权限（假如它存在的话）
                         if (ext == "cbz" || ext == "zip") {
-                            xyz.sakulik.comic.model.metadata.LocalComicInfoParser.parseFromZip(context, file.uri)?.let { local ->
+                            LocalComicInfoParser.parseFromZip(context, file.uri)?.let { local ->
                                 series = local.series ?: series
-                                authors = local.authors
-                                summary = local.summary
-                                genres = local.genres
-                                publisher = local.publisher
-                                rating = local.rating
+                                authors = local.getAllAuthors() ?: authors
+                                summary = local.summary ?: summary
+                                genres = local.genre ?: genres
+                                publisher = local.publisher ?: publisher
+                                rating = local.rating ?: rating
+                                volNum = local.volume?.toFloat() ?: volNum
+                                issueNum = local.number?.toFloatOrNull() ?: issueNum
+                                year = local.year?.toString() ?: year
                             }
                         }
 

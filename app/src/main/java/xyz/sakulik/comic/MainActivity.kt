@@ -1,42 +1,49 @@
 package xyz.sakulik.comic
 
+import android.app.Application
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.AbstractSavedStateViewModelFactory
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
-import xyz.sakulik.comic.navigation.HomeRoute
-import xyz.sakulik.comic.navigation.MetadataSearchRoute
-import xyz.sakulik.comic.navigation.ReaderRoute
-import xyz.sakulik.comic.navigation.SeriesDetailRoute
-import xyz.sakulik.comic.navigation.SettingsRoute
-import xyz.sakulik.comic.ui.bookshelf.SeriesDetailContent
-import xyz.sakulik.comic.ui.theme.ComicReaderTheme
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.foundation.layout.padding
-
-
-import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.lifecycle.AbstractSavedStateViewModelFactory
-import androidx.lifecycle.SavedStateHandle
-import androidx.lifecycle.ViewModel
-import xyz.sakulik.comic.viewmodel.BookshelfViewModel
 import xyz.sakulik.comic.model.db.AppDatabase
-import android.app.Application
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
-import xyz.sakulik.comic.ui.bookshelf.BookshelfScreen
 import xyz.sakulik.comic.model.db.ComicEntity
+import xyz.sakulik.comic.navigation.*
+import xyz.sakulik.comic.ui.ReaderScreen
+import xyz.sakulik.comic.ui.bookshelf.BookshelfScreen
+import xyz.sakulik.comic.ui.bookshelf.SeriesDetailContent
+import xyz.sakulik.comic.ui.components.ErrorScreen
+import xyz.sakulik.comic.ui.scrape.ScrapeSearchScreen
+import xyz.sakulik.comic.ui.settings.SettingsScreen
+import xyz.sakulik.comic.ui.theme.ComicReaderTheme
+import xyz.sakulik.comic.viewmodel.BookshelfViewModel
+import xyz.sakulik.comic.viewmodel.ComicState
+import xyz.sakulik.comic.viewmodel.ReaderViewModel
+import xyz.sakulik.comic.viewmodel.ScrapeViewModel
+import xyz.sakulik.comic.viewmodel.SeriesGroupData
 
 /**
  * Android 原生的单 Activity 根节点
@@ -76,10 +83,12 @@ fun ComicAppNavHost() {
         viewModelStoreOwner = activity,
         factory = object : AbstractSavedStateViewModelFactory(activity, activity.intent?.extras) {
             override fun <T : ViewModel> create(key: String, modelClass: Class<T>, handle: SavedStateHandle): T {
+                val db = AppDatabase.getDatabase(application)
                 @Suppress("UNCHECKED_CAST")
                 return BookshelfViewModel(
                     application,
-                    AppDatabase.getDatabase(application).comicDao(),
+                    db.comicDao(),
+                    db.collectionDao(),
                     handle
                 ) as T
             }
@@ -108,8 +117,66 @@ fun ComicAppNavHost() {
                 },
                 onManualScrapeClick = { comic ->
                     navController.navigate(MetadataSearchRoute(comicId = comic.id))
+                },
+                onCollectionClick = { col ->
+                    navController.navigate(CollectionDetailRoute(collectionId = col.id, collectionName = col.name))
                 }
             )
+        }
+
+        // ========== [页面 2: 合集详情页] ==========
+        composable<CollectionDetailRoute> { backStackEntry ->
+            val routeParams = backStackEntry.toRoute<CollectionDetailRoute>()
+            val collections by bookshelfViewModel.collections.collectAsState()
+            val collectionData = collections.find { it.collection.id == routeParams.collectionId }
+            
+            val configuration = LocalConfiguration.current
+            val adaptiveColumns = when {
+                configuration.screenWidthDp < 600 -> 3
+                configuration.screenWidthDp < 840 -> 5
+                else -> 7
+            }
+
+            Scaffold(
+                topBar = {
+                    TopAppBar(
+                        navigationIcon = {
+                            IconButton(onClick = { navController.popBackStack() }) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.ArrowBack, 
+                                    contentDescription = "后退"
+                                )
+                            }
+                        },
+                        title = { Text(routeParams.collectionName) }
+                    )
+                }
+            ) { padding ->
+                if (collectionData != null) {
+                    SeriesDetailContent(
+                        series = SeriesGroupData(
+                            seriesName = collectionData.collection.name,
+                            coverComic = collectionData.comics.firstOrNull() ?: ComicEntity(id = -1L, title="", uri="", extension=""),
+                            bookCount = collectionData.comics.size,
+                            books = collectionData.comics
+                        ),
+                        adaptiveColumns = adaptiveColumns,
+                        onComicClick = { comic ->
+                            navController.navigate(ReaderRoute(comicId = comic.id, initialPage = comic.currentPage))
+                        },
+                        onLongClick = { comic ->
+                            navController.navigate(MetadataSearchRoute(comicId = comic.id))
+                        },
+                        onRemoveFromCollection = { comic ->
+                            bookshelfViewModel.removeComicFromCollection(routeParams.collectionId, comic.id)
+                        },
+                        onSetAsCover = { comic ->
+                            bookshelfViewModel.updateCollectionCover(routeParams.collectionId, comic.id)
+                        },
+                        modifier = Modifier.padding(padding)
+                    )
+                }
+            }
         }
 
         // ========== [页面 2: 系列详情页] ==========
@@ -124,22 +191,22 @@ fun ComicAppNavHost() {
                 else -> 7
             }
 
-            androidx.compose.material3.Scaffold(
+            Scaffold(
                 topBar = {
-                    androidx.compose.material3.TopAppBar(
+                    TopAppBar(
                         navigationIcon = {
-                            androidx.compose.material3.IconButton(onClick = { navController.popBackStack() }) {
-                                androidx.compose.material3.Icon(
+                            IconButton(onClick = { navController.popBackStack() }) {
+                                Icon(
                                     Icons.AutoMirrored.Filled.ArrowBack, 
                                     contentDescription = "后退"
                                 )
                             }
                         },
                         title = { 
-                            androidx.compose.material3.Text(
+                            Text(
                                 routeParams.seriesName, 
                                 maxLines = 1, 
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                overflow = TextOverflow.Ellipsis
                             ) 
                         }
                     )
@@ -160,11 +227,11 @@ fun ComicAppNavHost() {
 
                     )
                 } else {
-                    androidx.compose.foundation.layout.Box(
+                    Box(
                         modifier = Modifier.fillMaxSize(), 
                         contentAlignment = Alignment.Center
                     ) {
-                        androidx.compose.material3.CircularProgressIndicator()
+                        CircularProgressIndicator()
                     }
                 }
             }
@@ -183,7 +250,7 @@ fun ComicAppNavHost() {
                     savedStateHandle["comicId"] = route.comicId
                     savedStateHandle["initialPage"] = route.initialPage
                 }
-                xyz.sakulik.comic.viewmodel.ReaderViewModel(
+                ReaderViewModel(
                     application, 
                     AppDatabase.getDatabase(application).comicDao(), 
                     savedStateHandle
@@ -196,19 +263,19 @@ fun ComicAppNavHost() {
 
             // 修正：即使 currentComic 为 null，只要状态是 Loading，也要展示进度条
             when (val s = state) {
-                is xyz.sakulik.comic.viewmodel.ComicState.Idle, is xyz.sakulik.comic.viewmodel.ComicState.Loading -> {
-                    androidx.compose.foundation.layout.Box(
+                is ComicState.Idle, is ComicState.Loading -> {
+                    Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(androidx.compose.ui.graphics.Color(0xFF0D0D0F))
+                            .background(Color(0xFF0D0D0F))
                     ) {
-                        androidx.compose.material3.CircularProgressIndicator(
+                        CircularProgressIndicator(
                             modifier = Modifier.align(Alignment.Center),
-                            color = androidx.compose.ui.graphics.Color(0xFFE53935)
+                            color = Color(0xFFE53935)
                         )
                     }
                 }
-                is xyz.sakulik.comic.viewmodel.ComicState.Ready -> {
+                is ComicState.Ready -> {
                     val readerMode by readerViewModel.readerMode.collectAsState()
                     val isImmersive by readerViewModel.isImmersive.collectAsState()
                     val isSharpenEnabled by readerViewModel.isSharpenEnabled.collectAsState()
@@ -226,14 +293,14 @@ fun ComicAppNavHost() {
                             readerViewModel.updateProgress(page, s.pageCount)
                         },
                         onBack = { navController.popBackStack() },
-                        onScrapeClick = { /* 开启刮削面板 */ },
+                        onScrapeClick = { readerViewModel.currentEntity?.id?.let { navController.navigate(MetadataSearchRoute(it)) } },
                         onToggleRtl = { readerViewModel.toggleRtl() },
                         onToggleSharpen = { readerViewModel.toggleSharpen() },
                         onToggleReaderMode = { readerViewModel.toggleReaderMode() },
                         onToggleImmersive = { readerViewModel.setImmersive(it) }
                     )
                 }
-                is xyz.sakulik.comic.viewmodel.ComicState.Error -> {
+                is ComicState.Error -> {
                     xyz.sakulik.comic.ui.components.ErrorScreen(
                         message = s.message,
                         onBack = { navController.popBackStack() }
@@ -247,7 +314,7 @@ fun ComicAppNavHost() {
             val routeParams = backStackEntry.toRoute<MetadataSearchRoute>()
             val context = androidx.compose.ui.platform.LocalContext.current.applicationContext as Application
             val scrapeViewModel = viewModel {
-                xyz.sakulik.comic.viewmodel.ScrapeViewModel(context, AppDatabase.getDatabase(context).comicDao())
+                ScrapeViewModel(context, AppDatabase.getDatabase(context).comicDao())
             }
             
             xyz.sakulik.comic.ui.scrape.ScrapeSearchScreen(

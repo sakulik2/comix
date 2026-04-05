@@ -25,3 +25,6 @@ object SettingsRoute // 全局配置页面
 
 @Serializable
 data class MetadataSearchRoute(val comicId: Long) // 手动刮削搜索页
+
+@Serializable
+data class CollectionDetailRoute(val collectionId: Long, val collectionName: String) // 合集详情页

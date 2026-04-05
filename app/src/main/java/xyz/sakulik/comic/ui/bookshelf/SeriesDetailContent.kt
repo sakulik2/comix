@@ -16,6 +16,8 @@ fun SeriesDetailContent(
     adaptiveColumns: Int,
     onComicClick: (ComicEntity) -> Unit,
     onLongClick: (ComicEntity) -> Unit,
+    onRemoveFromCollection: ((ComicEntity) -> Unit)? = null,
+    onSetAsCover: ((ComicEntity) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val issuesList = series.books.filter { it.format == ComicFormat.ISSUE || it.format == ComicFormat.CHAPTER || (it.format == ComicFormat.UNKNOWN && it.volumeNumber == null) }.sortedBy { it.issueNumber ?: 9999f }
@@ -57,6 +59,24 @@ fun SeriesDetailContent(
                     onClick = { onComicClick(book) },
                     onLongClick = { onLongClick(book) }
                 ) 
+                
+                if (onRemoveFromCollection != null || onSetAsCover != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        if (onRemoveFromCollection != null) {
+                            TextButton(onClick = { onRemoveFromCollection(book) }) {
+                                Text("移除", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                        if (onSetAsCover != null) {
+                            TextButton(onClick = { onSetAsCover(book) }) {
+                                Text("设为封面", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
             }
         }
         if (issuesList.isNotEmpty()) {

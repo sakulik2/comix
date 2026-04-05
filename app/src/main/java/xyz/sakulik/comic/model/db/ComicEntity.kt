@@ -43,5 +43,8 @@ data class ComicEntity(
     
     // 增量扫描护航 (Phase 3)
     val lastModified: Long = 0,
-    val fileSize: Long = 0
+    val fileSize: Long = 0,
+
+    // 备注与自定义别名 (Phase 4)
+    val remark: String? = null
 )

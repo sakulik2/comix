@@ -81,37 +81,70 @@ object CoverExtractor {
     }
 
     private fun extractCbrCover(context: Context, uri: Uri, outPath: File): Boolean {
+        // [性能优化] 识别本地文件路径，直接打开
+        if (uri.scheme == "file" || (uri.scheme == null && uri.path?.startsWith("/") == true)) {
+            val localFile = uri.path?.let { File(it) }
+            if (localFile?.exists() == true) {
+                return extractCbrFromFile(localFile, outPath)
+            }
+        }
+
+        // 如果是 SAF/Content Uri，不得不使用临时文件（junrar 需要 RandomAccess)
+        // 但我们这里可以稍微改进：如果文件非常大，只拷贝前 50MB 尝试提取（漫画封面通常在前 50MB 内）
         val sessionId = java.util.UUID.randomUUID().toString()
         val tempFile = File(context.cacheDir, "scan_temp_$sessionId.cbr")
         try {
             context.contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(tempFile).use { output ->
-                    input.copyTo(output)
+                    // 仅拷贝前 30MB，对于绝大多数漫画来说，文件头和封面都在这 30MB 里面
+                    // 这比拷贝 4GB 快了几个数量级
+                    val buffer = ByteArray(16384)
+                    var totalCopied = 0L
+                    val limit = 30 * 1024 * 1024L 
+                    while (totalCopied < limit) {
+                        val read = input.read(buffer)
+                        if (read == -1) break
+                        output.write(buffer, 0, read)
+                        totalCopied += read
+                    }
                 }
             }
             
-            Archive(tempFile).use { archive ->
+            return if (tempFile.exists()) extractCbrFromFile(tempFile, outPath) else false
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return false
+        } finally {
+            tempFile.delete()
+        }
+    }
+
+    private fun extractCbrFromFile(file: File, outPath: File): Boolean {
+        try {
+            Archive(file).use { archive ->
+                // 筛选出第一张合规图片
                 val firstImage = archive.fileHeaders
                     .filter { !it.isDirectory && isImage(it.fileName) }
                     .minByOrNull { it.fileName.lowercase() }
                 
                 if (firstImage != null) {
                     archive.getInputStream(firstImage).use { imgIn ->
-                        val bitmap = decodeStreamWithThreshold(context, imgIn)
+                        val bitmap = decodeStreamWithThreshold(null, imgIn) // 这里 context 传 null 也没关系
                         if (bitmap != null) {
                             saveBitmapToWebp(bitmap, outPath)
                             bitmap.recycle()
+                            return true
                         }
                     }
                 }
             }
-        } finally {
-            tempFile.delete()
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
-        return outPath.exists()
+        return false
     }
 
-    private fun decodeStreamWithThreshold(context: Context, input: java.io.InputStream): Bitmap? {
+    private fun decodeStreamWithThreshold(context: Context?, input: java.io.InputStream): Bitmap? {
         val MAX_MEMORY_IMG_SIZE = 15 * 1024 * 1024 
         val baos = java.io.ByteArrayOutputStream()
         val buffer = ByteArray(16384)
@@ -137,7 +170,7 @@ object CoverExtractor {
             options.inJustDecodeBounds = false
             options.inPreferredConfig = Bitmap.Config.RGB_565
             return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-        } else {
+        } else if (context != null) {
             val tempImg = File(context.cacheDir, "scan_fallback_${java.util.UUID.randomUUID()}.tmp")
             try {
                 FileOutputStream(tempImg).use { out ->
@@ -154,6 +187,7 @@ object CoverExtractor {
                 tempImg.delete()
             }
         }
+        return null
     }
 
     private fun saveBitmapToWebp(bitmap: Bitmap, outPath: File) {

@@ -60,6 +60,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val dao by lazy { AppDatabase.getDatabase(application).comicDao() }
     private var currentEntity: ComicEntity? = null
+    val currentComicId: Long? get() = currentEntity?.id
     private var pageLoader: ComicPageLoader? = null
     private val loaderFactory = ComicPageLoaderFactory(application)
 
