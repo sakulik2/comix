@@ -195,9 +195,9 @@ class LocalArchivePageLoader(
                     val fileSize = getUriSize(uri)
                     val available = getAvailableSpace()
                     
-                    if (fileSize > 2L * 1024 * 1024 * 1024 || available < fileSize + 500 * 1024 * 1024) {
+                    if (fileSize > 650L * 1024 * 1024 || available < fileSize + 500 * 1024 * 1024) {
                         isStreamingOnly = true
-                        android.util.Log.i("ArchiveLoader", "Storage pressure or huge file ($fileSize bytes), skipping mirror.")
+                        android.util.Log.i("ArchiveLoader", "Storage pressure or large file ($fileSize bytes), skipping mirror.")
                         return@withLock null
                     }
 
