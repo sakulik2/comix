@@ -23,6 +23,15 @@ import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 import kotlin.coroutines.coroutineContext
 
+import net.sf.sevenzipjbinding.IInArchive
+import net.sf.sevenzipjbinding.IInStream
+import net.sf.sevenzipjbinding.PropID
+import net.sf.sevenzipjbinding.SevenZip
+import net.sf.sevenzipjbinding.ISequentialOutStream
+import net.sf.sevenzipjbinding.ExtractOperationResult
+import net.sf.sevenzipjbinding.IArchiveExtractCallback
+import net.sf.sevenzipjbinding.ExtractAskMode
+
 /**
  * 本地档案页面加载器，支持 .cbr, .cbz, .pdf 格式
  * 采用滑动窗口解压策略，平衡磁盘空间与 IO 性能
@@ -73,6 +82,7 @@ class LocalArchivePageLoader(
     private var activePfd: ParcelFileDescriptor? = null
     private var activeChannel: FileChannel? = null
     private var activeRarArchive: Archive? = null
+    private var activeSevenZipArchive: IInArchive? = null
     private var activeZipFile: java.util.zip.ZipFile? = null
     private var activeZipIndexer: ZipFastIndexer? = null
     private var activeSortedHeaders: List<Any>? = null
@@ -104,15 +114,41 @@ class LocalArchivePageLoader(
                     } catch (e: Exception) { /* Silently fall back to indexer */ }
                 }
                 "cbr", "rar" -> {
-                    // [Turbo-Random] Use official SeekableReadOnlyByteChannel to bridge NIO FileChannel to Junrar
-                    val nioChannel = RarNioChannel(channel)
-                    val volumeManager = RarVolumeManager(nioChannel)
-                    val archive = Archive(volumeManager, null, null)
-                    activeRarArchive = archive
-                    activeSortedHeaders = archive.getFileHeaders()
-                        .filter { !it.isDirectory && isImage(it.fileName ?: "") }
-                        .sortedBy { it.fileName }
-                    android.util.Log.i("ArchiveLoader", "RAR NIO Index success: ${activeSortedHeaders?.size} entries.")
+                    try {
+                        // [驱动 A] Junrar: 支持 RAR V4 指称，纯 Java，快速
+                        val nioChannel = RarNioChannel(channel)
+                        val volumeManager = RarVolumeManager(nioChannel)
+                        val archive = Archive(volumeManager, null, null)
+                        activeRarArchive = archive
+                        activeSortedHeaders = archive.getFileHeaders()
+                            .filter { !it.isDirectory && isImage(it.fileName ?: "") }
+                            .sortedBy { it.fileName }
+                        android.util.Log.i("ArchiveLoader", "RAR NIO Index success (V4): ${activeSortedHeaders?.size} entries.")
+                    } catch (e: Exception) {
+                        // [驱动 B] SevenZipJBinding: 针对 RAR V5 的官方/JNI 桥接降级方案
+                        if (e is com.github.junrar.exception.UnsupportedRarV5Exception || e.message?.contains("V5") == true) {
+                            android.util.Log.w("ArchiveLoader", "Junrar V5 mismatch, fallback to SevenZipJBinding...")
+                            try {
+                                val nioStream = SevenZipNioStream(channel)
+                                val archive = SevenZip.openInArchive(null, nioStream)
+                                activeSevenZipArchive = archive
+                                
+                                val list = mutableListOf<SevenZipMeta>()
+                                for (i in 0 until archive.numberOfItems) {
+                                    val path = archive.getProperty(i, PropID.PATH) as? String ?: continue
+                                    val isFolder = archive.getProperty(i, PropID.IS_FOLDER) as? Boolean ?: false
+                                    if (!isFolder && isImage(path)) {
+                                        list.add(SevenZipMeta(i, path))
+                                    }
+                                }
+                                activeSortedHeaders = list.sortedBy { it.path }
+                                android.util.Log.i("ArchiveLoader", "RAR V5 SevenZip Index success: ${activeSortedHeaders?.size} entries.")
+                            } catch (szE: Exception) {
+                                android.util.Log.e("ArchiveLoader", "SevenZip Recovery Failed: ${szE.message}")
+                                throw szE
+                            }
+                        } else throw e
+                    }
                 }
             }
             
@@ -135,11 +171,13 @@ class LocalArchivePageLoader(
     private fun closeActiveSession() {
         try {
             activeRarArchive?.close()
+            activeSevenZipArchive?.close()
             activeZipFile?.close()
             activePfd?.close()
             activeChannel?.close()
         } catch (e: Exception) { /* ignore */ }
         activeRarArchive = null
+        activeSevenZipArchive = null
         activeZipFile = null
         activeZipIndexer = null
         activeChannel = null
@@ -429,11 +467,21 @@ class LocalArchivePageLoader(
                                 result
                             }
                             "cbr", "rar" -> {
-                                val header = entry as com.github.junrar.rarfile.FileHeader
-                                android.util.Log.d("ArchiveLoader", "NIO RAR: fetching ${header.fileName}")
-                                activeRarArchive?.getInputStream(header)?.use { stream ->
-                                    decodeImageStream(stream, width, height)
-                                }
+                                if (activeRarArchive != null) {
+                                    val header = entry as com.github.junrar.rarfile.FileHeader
+                                    activeRarArchive?.getInputStream(header)?.use { stream ->
+                                        decodeImageStream(stream, width, height)
+                                    }
+                                } else if (activeSevenZipArchive != null) {
+                                    val meta = entry as SevenZipMeta
+                                    val cacheFile = File(sessionDir, "sz_${meta.index}.tmp")
+                                    if (!cacheFile.exists()) {
+                                        extractSevenZipToFile(activeSevenZipArchive!!, meta.index, cacheFile)
+                                    }
+                                    if (cacheFile.exists()) {
+                                        decodeImageFile(cacheFile, width, height)
+                                    } else null
+                                } else null
                             }
                             else -> null
                         }
@@ -637,15 +685,27 @@ class LocalArchivePageLoader(
                             when (extension.lowercase()) {
                                 "cbz", "zip" -> {
                                     val name = entry as String
-                                    activeZipFile?.let { zip ->
+                                    val stream = activeZipFile?.let { zip ->
                                         zip.getEntry(name)?.let { zip.getInputStream(it) }
                                     } ?: activeZipIndexer?.getEntryInputStream(name)
+                                    stream?.use { saveEntryToCache(it, idx) }
                                 }
                                 "cbr", "rar" -> {
-                                    activeRarArchive?.getInputStream(entry as com.github.junrar.rarfile.FileHeader)
+                                    if (activeRarArchive != null) {
+                                        activeRarArchive?.getInputStream(entry as com.github.junrar.rarfile.FileHeader)?.use { saveEntryToCache(it, idx) }
+                                    } else if (activeSevenZipArchive != null) {
+                                        // RAR5 后台静默预解压：直写磁盘 tmp
+                                        val cacheFile = File(sessionDir, "p_$idx.tmp")
+                                        val meta = entry as SevenZipMeta
+                                        extractSevenZipToFile(activeSevenZipArchive!!, meta.index, cacheFile)
+                                        extractedFiles[idx] = cacheFile
+                                    }
                                 }
-                                else -> null
-                            }?.use { saveEntryToCache(it, idx) }
+                                "pdf" -> {
+                                    // PDF 预取逻辑可扩展，当前暂不通过此路径预处理
+                                }
+                                else -> {}
+                            }
                         }
                     }
                 }
@@ -790,6 +850,52 @@ class LocalArchivePageLoader(
                 bitmapPool.clear()
             }
         } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    private fun extractSevenZipToFile(archive: IInArchive, index: Int, targetFile: File) {
+        if (targetFile.exists()) return
+        try {
+            val out = java.io.FileOutputStream(targetFile)
+            out.use { fos ->
+                archive.extract(intArrayOf(index), false, object : IArchiveExtractCallback {
+                    override fun getStream(index: Int, askMode: ExtractAskMode?): ISequentialOutStream? {
+                        if (askMode != ExtractAskMode.EXTRACT) return null
+                        return ISequentialOutStream { data ->
+                            fos.write(data)
+                            data.size
+                        }
+                    }
+                    override fun prepareOperation(askMode: ExtractAskMode?) {}
+                    override fun setOperationResult(result: ExtractOperationResult?) {}
+                    override fun setCompleted(completeValue: Long) {}
+                    override fun setTotal(totalValue: Long) {}
+                })
+            }
+        } catch (e: Exception) {
+            if (targetFile.exists()) targetFile.delete()
+            android.util.Log.e("ArchiveLoader", "SevenZip extraction failed for index $index: ${e.message}")
+        }
+    }
+
+    private data class SevenZipMeta(val index: Int, val path: String)
+
+    private inner class SevenZipNioStream(private val channel: FileChannel) : IInStream {
+        override fun seek(offset: Long, origin: Int): Long {
+            val target = when (origin) {
+                IInStream.SEEK_SET -> offset
+                IInStream.SEEK_CUR -> channel.position() + offset
+                IInStream.SEEK_END -> channel.size() + offset
+                else -> channel.position()
+            }
+            channel.position(target)
+            return target
+        }
+        override fun read(data: ByteArray): Int {
+            val buf = ByteBuffer.wrap(data)
+            val read = channel.read(buf)
+            return if (read < 0) 0 else read
+        }
+        override fun close() {}
     }
 
     private inner class RarNioChannel(private val channel: FileChannel) : com.github.junrar.io.SeekableReadOnlyByteChannel {

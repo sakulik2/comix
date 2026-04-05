@@ -43,8 +43,9 @@ android {
 
     packaging {
         jniLibs {
-            // 解决 androidx.graphics.path.so 无法 strip 的警告
+            // 解决第三方 JNI 库无法进行二次 strip 的编译警告
             keepDebugSymbols.add("**/libandroidx.graphics.path.so")
+            keepDebugSymbols.add("**/lib7-Zip-JBinding.so")
         }
     }
 }
@@ -78,6 +79,8 @@ dependencies {
 
     // CBR 解析库
     implementation("com.github.junrar:junrar:7.5.5")
+    // 对于 RAR5 (CBR v5) 的原生 JNI 桥接支持
+    implementation("com.github.omicronapps:7-Zip-JBinding-4Android:Release-16.02-2.03")
 
     // 携程
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
