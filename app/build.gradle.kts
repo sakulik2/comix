@@ -16,6 +16,10 @@ android {
         versionCode = 10
         versionName = "1.6.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        
+        ndk {
+            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))
+        }
     }
 
     buildTypes {
@@ -45,7 +49,6 @@ android {
         jniLibs {
             // 解决第三方 JNI 库无法进行二次 strip 的编译警告
             keepDebugSymbols.add("**/libandroidx.graphics.path.so")
-            keepDebugSymbols.add("**/lib7-Zip-JBinding.so")
         }
     }
 }

@@ -60,3 +60,14 @@
 # --- 保持所有的实体类 (Entity) 与数据模型 ---
 -keep class xyz.sakulik.comic.model.db.** { *; }
 -keep class xyz.sakulik.comic.viewmodel.** { *; }
+
+# --- SevenZipJBinding (CBR v5 NIO) ---
+-keep class net.sf.sevenzipjbinding.** { *; }
+-keep interface net.sf.sevenzipjbinding.** { *; }
+-dontwarn net.sf.sevenzipjbinding.**
+
+# --- Compose 动画与手势加固 ---
+-keep class androidx.compose.animation.** { *; }
+-keep class androidx.compose.foundation.gestures.** { *; }
+-keep class androidx.compose.ui.graphics.** { *; }
+-keep class androidx.compose.foundation.layout.BoxScope { *; }
