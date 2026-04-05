@@ -2,6 +2,7 @@ package xyz.sakulik.comic.worker
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
@@ -80,10 +81,11 @@ class LibraryScanWorker(
                             setProgress(workDataOf(PROGRESS_MSG to "同步进度: ${index + 1}/${allFiles.size} - ${file.name}"))
                         }
 
-                        // 检查是否已入库，或其封面是否被旧版机制留在 cacheDir 遭系统清场
                         val existing = comicDao.getComicByUri(fileUriStr)
-                        // 触发条件：新书，或者是老书但曾有封面物理文件却离奇蒸发了
-                        val needExtract = existing == null || (existing.coverCachePath != null && !File(existing.coverCachePath).exists())
+                        val needExtract = existing == null || existing.coverCachePath == null || !File(existing.coverCachePath).exists()
+                        if (needExtract) {
+                            Log.i("LibraryScanWorker", "Extracting cover for: ${file.name}")
+                        }
                         
                         if (needExtract) {
                             val originalName = file.name ?: "Unknown"

@@ -65,8 +65,26 @@ data class ComicInfo(
     var manga: String? = null, // Yes, No, YesAndRightToLeft
 
     @field:Element(name = "CommunityRating", required = false)
-    var rating: Float? = null
+    var rating: Float? = null,
+
+    @field:org.simpleframework.xml.Element(name = "Pages", required = false)
+    var pages: ComicInfoPages? = null
 ) {
+@Root(name = "Pages", strict = false)
+data class ComicInfoPages(
+    @field:org.simpleframework.xml.ElementList(inline = true, required = false)
+    var pageList: MutableList<ComicInfoPage>? = null
+)
+
+@Root(name = "Page", strict = false)
+data class ComicInfoPage(
+    @field:org.simpleframework.xml.Attribute(name = "Image")
+    var image: Int = 0,
+
+    @field:org.simpleframework.xml.Attribute(name = "Type", required = false)
+    var type: String? = null // e.g., "FrontCover"
+)
+
     // 助手方法：组合出所有作者/参与者
     fun getAllAuthors(): String? {
         val authors = listOfNotNull(writer, penciller, inker, coverArtist)

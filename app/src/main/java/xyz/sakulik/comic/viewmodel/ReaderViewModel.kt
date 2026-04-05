@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import xyz.sakulik.comic.model.db.ComicDao
 import xyz.sakulik.comic.model.db.ComicEntity
 import xyz.sakulik.comic.model.loader.ComicPageLoader
@@ -124,6 +126,59 @@ class ReaderViewModel(
         val entity = currentEntity ?: return
         viewModelScope.launch {
             dao.updateProgress(entity.id, page, totalPages, System.currentTimeMillis())
+        }
+    }
+
+    /**
+     * [Phase 2] 将当前页设为封面，并同步导出元数据
+     */
+    fun setAsCover(pageIndex: Int, onComplete: (Boolean) -> Unit = {}) {
+        val entity = currentEntity ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            // 1. 获取现有封面路径并清理旧系统生成的封面（如果在内部 covers 目录）
+            val coverDir = File(getApplication<Application>().filesDir, "covers").apply { mkdirs() }
+            
+            // 物理清理旧文件，防止存储空间膨胀，且有助于路径变更触发 UI 刷新
+            entity.coverCachePath?.let { path ->
+                val oldFile = File(path)
+                if (oldFile.exists() && oldFile.parentFile?.absolutePath == coverDir.absolutePath) {
+                    oldFile.delete()
+                }
+            }
+
+            // 2. 始终生成新的 UUID 文件名
+            // 关键：Coil 是基于文件路径缓存的，路径变化是强制触发 BookshelfScreen 刷新的最稳健方案
+            val finalCoverFile = File(coverDir, "${java.util.UUID.randomUUID()}.webp")
+
+            // 3. 物理提取
+            val success = xyz.sakulik.comic.model.scanner.CoverExtractor.extractPageToCache(
+                context = getApplication(),
+                uri = Uri.parse(entity.uri),
+                extension = entity.extension,
+                pageIndex = pageIndex,
+                outPath = finalCoverFile
+            )
+
+            if (success) {
+                // 4. 更新数据库：包含自定义页码记录和新封面路径
+                val updated = entity.copy(
+                    customCoverPage = pageIndex,
+                    coverCachePath = finalCoverFile.absolutePath
+                )
+                dao.update(updated)
+                currentEntity = updated // 同步内存状态
+
+                // 5. 对接：触发 ComicInfo.xml 同级导出
+                xyz.sakulik.comic.model.metadata.LocalComicInfoWriter.writeCompanionXml(getApplication(), updated)
+                
+                withContext(Dispatchers.Main) {
+                    onComplete(true)
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    onComplete(false)
+                }
+            }
         }
     }
 

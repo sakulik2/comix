@@ -22,6 +22,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 import kotlin.coroutines.coroutineContext
+import xyz.sakulik.comic.model.processor.ImageEnhanceEngine
 
 import net.sf.sevenzipjbinding.IInArchive
 import net.sf.sevenzipjbinding.IInStream
@@ -103,7 +104,9 @@ class LocalArchivePageLoader(
                     // We prioritize the manual indexer because it's more stable than /proc/self/fd/ZipFile
                     val indexer = ZipFastIndexer(channel)
                     activeZipIndexer = indexer
-                    activeSortedHeaders = indexer.getEntryNames().filter { isImage(it) }.sorted()
+                    val list = indexer.getEntryNames().filter { isImage(it) }.sorted()
+                    activeSortedHeaders = list
+                    android.util.Log.i("ArchiveLoader", "ZIP Headers Initialized: ${list.size} pages. First: ${list.firstOrNull()}")
                     
                     // Optional: Still try ZipFile as a high-perf C++ speed alternate
                     val pfdFile = java.io.File("/proc/self/fd/${pfd.fd}")
@@ -114,40 +117,41 @@ class LocalArchivePageLoader(
                     } catch (e: Exception) { /* Silently fall back to indexer */ }
                 }
                 "cbr", "rar" -> {
-                    try {
-                        // [驱动 A] Junrar: 支持 RAR V4 指称，纯 Java，快速
-                        val nioChannel = RarNioChannel(channel)
-                        val volumeManager = RarVolumeManager(nioChannel)
-                        val archive = Archive(volumeManager, null, null)
-                        activeRarArchive = archive
-                        activeSortedHeaders = archive.getFileHeaders()
-                            .filter { !it.isDirectory && isImage(it.fileName ?: "") }
-                            .sortedBy { it.fileName }
-                        android.util.Log.i("ArchiveLoader", "RAR NIO Index success (V4): ${activeSortedHeaders?.size} entries.")
-                    } catch (e: Exception) {
-                        // [驱动 B] SevenZipJBinding: 针对 RAR V5 的官方/JNI 桥接降级方案
-                        if (e is com.github.junrar.exception.UnsupportedRarV5Exception || e.message?.contains("V5") == true) {
-                            android.util.Log.w("ArchiveLoader", "Junrar V5 mismatch, fallback to SevenZipJBinding...")
-                            try {
-                                val nioStream = SevenZipNioStream(channel)
-                                val archive = SevenZip.openInArchive(null, nioStream)
-                                activeSevenZipArchive = archive
-                                
-                                val list = mutableListOf<SevenZipMeta>()
-                                for (i in 0 until archive.numberOfItems) {
-                                    val path = archive.getProperty(i, PropID.PATH) as? String ?: continue
-                                    val isFolder = archive.getProperty(i, PropID.IS_FOLDER) as? Boolean ?: false
-                                    if (!isFolder && isImage(path)) {
-                                        list.add(SevenZipMeta(i, path))
-                                    }
+                    val version = getRarVersion(channel)
+                    if (version == 5) {
+                        android.util.Log.i("ArchiveLoader", "RAR V5 Fingerprint detected, direct to SevenZip engine.")
+                        try {
+                            val nioStream = SevenZipNioStream(channel)
+                            val archive = SevenZip.openInArchive(null, nioStream)
+                            activeSevenZipArchive = archive
+                            
+                            val list = mutableListOf<SevenZipMeta>()
+                            for (i in 0 until archive.numberOfItems) {
+                                val path = archive.getProperty(i, PropID.PATH) as? String ?: continue
+                                val isFolder = archive.getProperty(i, PropID.IS_FOLDER) as? Boolean ?: false
+                                if (!isFolder && isImage(path)) {
+                                    list.add(SevenZipMeta(i, path))
                                 }
-                                activeSortedHeaders = list.sortedBy { it.path }
-                                android.util.Log.i("ArchiveLoader", "RAR V5 SevenZip Index success: ${activeSortedHeaders?.size} entries.")
-                            } catch (szE: Exception) {
-                                android.util.Log.e("ArchiveLoader", "SevenZip Recovery Failed: ${szE.message}")
-                                throw szE
                             }
-                        } else throw e
+                            activeSortedHeaders = list.sortedBy { it.path }
+                        } catch (e: Exception) {
+                            android.util.Log.e("ArchiveLoader", "SevenZip direct open failed: ${e.message}")
+                            throw e
+                        }
+                    } else {
+                        android.util.Log.i("ArchiveLoader", "RAR V4 detected, using Junrar engine.")
+                        try {
+                            val nioChannel = RarNioChannel(channel)
+                            val volumeManager = RarVolumeManager(nioChannel)
+                            val archive = Archive(volumeManager, null, null)
+                            activeRarArchive = archive
+                            activeSortedHeaders = archive.getFileHeaders()
+                                .filter { !it.isDirectory && isImage(it.fileName ?: "") }
+                                .sortedBy { it.fileName }
+                        } catch (e: Exception) {
+                            android.util.Log.e("ArchiveLoader", "Junrar V4 open failed: ${e.message}")
+                            throw e
+                        }
                     }
                 }
             }
@@ -379,9 +383,17 @@ class LocalArchivePageLoader(
                                 }
                             }
                             "cbr", "rar" -> {
-                                Archive(input).use { archive ->
-                                    archive.getFileHeaders().forEach { header ->
-                                        if (!header.isDirectory && isImage(header.fileName ?: "")) names.add(header.fileName)
+                                try {
+                                    Archive(input).use { archive ->
+                                        archive.getFileHeaders().forEach { header ->
+                                            if (!header.isDirectory && isImage(header.fileName ?: "")) names.add(header.fileName)
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    if (e is com.github.junrar.exception.UnsupportedRarV5Exception || e.message?.contains("V5") == true) {
+                                        android.util.Log.w("ArchiveLoader", "Junrar V5 mismatch in sequential scan, falling back to SevenZip (This may be slow for streams)...")
+                                        // 顺位降级：对于 Stream 来说，SevenZip 很难处理，所以这里最好提示或记录异常
+                                        // 实际上由于 ensureActiveSession 应该已经处理了文件/NIO 模式下的 RAR5，此路径主要针对冷启动
                                     }
                                 }
                             }
@@ -407,9 +419,22 @@ class LocalArchivePageLoader(
                         }
                     }
                     "cbr", "rar" -> {
-                        Archive(archiveFile).use { archive ->
-                            archive.getFileHeaders().forEach { header ->
-                                if (!header.isDirectory && isImage(header.fileName ?: "")) names.add(header.fileName)
+                        try {
+                            Archive(archiveFile).use { archive ->
+                                archive.getFileHeaders().forEach { header ->
+                                    if (!header.isDirectory && isImage(header.fileName ?: "")) names.add(header.fileName)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            if (e is com.github.junrar.exception.UnsupportedRarV5Exception || e.message?.contains("V5") == true) {
+                                val inStream = SevenZipNioStream(java.io.RandomAccessFile(archiveFile, "r").channel)
+                                SevenZip.openInArchive(null, inStream).use { szArchive ->
+                                    for (i in 0 until szArchive.numberOfItems) {
+                                        val path = szArchive.getProperty(i, PropID.PATH) as? String ?: continue
+                                        val isFolder = szArchive.getProperty(i, PropID.IS_FOLDER) as? Boolean ?: false
+                                        if (!isFolder && isImage(path)) names.add(path)
+                                    }
+                                }
                             }
                         }
                     }
@@ -424,10 +449,10 @@ class LocalArchivePageLoader(
     }
 
    override suspend fun getPageData(pageIndex: Int, width: Int, height: Int): Any? = withContext(Dispatchers.IO) {
-        if (extension.lowercase() == "pdf") return@withContext loadPdfPage(pageIndex, width, height)
-
-        // 1. 缓存优先 (Sliding Window 预解析结果)
+        // 1. 缓存优先 (支持预读图片或预渲染 PDF)
         extractedFiles[pageIndex]?.let { if (it.exists()) return@withContext decodeImageFile(it, width, height) }
+
+        if (extension.lowercase() == "pdf") return@withContext loadPdfPage(pageIndex, width, height)
 
         // 快速检查：如果协程已取消（用户已划走），直接退出，不争夺锁
         ensureActive()
@@ -616,7 +641,9 @@ class LocalArchivePageLoader(
                 android.util.Log.e("ArchiveLoader", "BitmapFactory returned null for stream even after retry")
             }
             
-            return if (isSharpenEnabled && bitmap != null) sharpenBitmap(bitmap) else bitmap
+            return if (isSharpenEnabled && bitmap != null) {
+                ImageEnhanceEngine.enhance(bitmap) { w, h, cfg -> obtainBitmap(w, h, cfg) }
+            } else bitmap
         } catch (e: Exception) {
             android.util.Log.e("ArchiveLoader", "decodeImageStream encountered fatal error: ${e.message}", e)
             return null
@@ -691,18 +718,18 @@ class LocalArchivePageLoader(
                                     stream?.use { saveEntryToCache(it, idx) }
                                 }
                                 "cbr", "rar" -> {
-                                    if (activeRarArchive != null) {
-                                        activeRarArchive?.getInputStream(entry as com.github.junrar.rarfile.FileHeader)?.use { saveEntryToCache(it, idx) }
-                                    } else if (activeSevenZipArchive != null) {
+                                    if (activeRarArchive != null && entry is com.github.junrar.rarfile.FileHeader) {
+                                        activeRarArchive?.getInputStream(entry)?.use { saveEntryToCache(it, idx) }
+                                    } else if (activeSevenZipArchive != null && entry is SevenZipMeta) {
                                         // RAR5 后台静默预解压：直写磁盘 tmp
                                         val cacheFile = File(sessionDir, "p_$idx.tmp")
-                                        val meta = entry as SevenZipMeta
-                                        extractSevenZipToFile(activeSevenZipArchive!!, meta.index, cacheFile)
+                                        extractSevenZipToFile(activeSevenZipArchive!!, entry.index, cacheFile)
                                         extractedFiles[idx] = cacheFile
                                     }
                                 }
                                 "pdf" -> {
-                                    // PDF 预取逻辑可扩展，当前暂不通过此路径预处理
+                                    // [PDF 核心优化]：利用后台空闲 IO 预渲染临近页面
+                                    renderPdfToCache(idx)
                                 }
                                 else -> {}
                             }
@@ -741,36 +768,70 @@ class LocalArchivePageLoader(
         }
     }
 
-    private fun loadPdfPage(pageIndex: Int, reqWidth: Int, reqHeight: Int): Bitmap? {
+    private suspend fun loadPdfPage(pageIndex: Int, reqWidth: Int, reqHeight: Int): Bitmap? = archiveMutex.withLock {
         try {
             openPdfSync()
-            val renderer = pdfRenderer ?: return null
-            if (pageIndex !in 0 until renderer.pageCount) return null
+            val renderer = pdfRenderer ?: return@withLock null
+            if (pageIndex !in 0 until renderer.pageCount) return@withLock null
             val page = renderer.openPage(pageIndex)
             val scale = (minOf(reqWidth.toFloat() / page.width, reqHeight.toFloat() / page.height)).coerceAtMost(2f)
             val w = (page.width * scale).toInt().coerceAtLeast(1)
             val h = (page.height * scale).toInt().coerceAtLeast(1)
+            
+            // [性能优化] 接入 Bitmap 内存池
             val bitmap = obtainBitmap(w, h, Bitmap.Config.RGB_565)
+            bitmap.eraseColor(android.graphics.Color.WHITE)
+            val matrix = Matrix().apply { postScale(scale, scale) }
+            
+            android.util.Log.v("ArchiveLoader", "PDF Sync Render: $pageIndex @ ${scale}x")
+            page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            page.close()
+            return@withLock if (isSharpenEnabled) {
+                ImageEnhanceEngine.enhance(bitmap) { w, h, cfg -> obtainBitmap(w, h, cfg) }
+            } else bitmap
+        } catch (e: Exception) { 
+            android.util.Log.e("ArchiveLoader", "PDF Load Error: ${e.message}")
+            return@withLock null 
+        }
+    }
+
+    private fun renderPdfToCache(pageIndex: Int) {
+        val file = File(sessionDir, "p_$pageIndex.tmp")
+        if (file.exists()) {
+            extractedFiles[pageIndex] = file
+            return
+        }
+        
+        try {
+            // 注意：此处由 extractWindow 的 archiveMutex 保护，外部已加锁
+            openPdfSync()
+            val renderer = pdfRenderer ?: return
+            if (pageIndex !in 0 until renderer.pageCount) return
+            
+            val page = renderer.openPage(pageIndex)
+            // 预渲染使用 1.5x 固定中等采样率
+            val scale = 1.5f
+            val w = (page.width * scale).toInt()
+            val h = (page.height * scale).toInt()
+            
+            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
             bitmap.eraseColor(android.graphics.Color.WHITE)
             val matrix = Matrix().apply { postScale(scale, scale) }
             page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
             page.close()
-            return if (isSharpenEnabled) sharpenBitmap(bitmap) else bitmap
-        } catch (e: Exception) { e.printStackTrace(); return null }
+            
+            file.outputStream().use { out ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+            }
+            bitmap.recycle()
+            extractedFiles[pageIndex] = file
+            android.util.Log.d("ArchiveLoader", "PDF Pre-rendered page $pageIndex to cache.")
+        } catch (e: Exception) {
+            android.util.Log.e("ArchiveLoader", "PDF Pre-render failed: ${e.message}")
+        }
     }
 
-    private fun sharpenBitmap(src: Bitmap): Bitmap {
-        val width = src.width
-        val height = src.height
-        val dest = obtainBitmap(width, height, if (src.config == Bitmap.Config.RGB_565) Bitmap.Config.RGB_565 else Bitmap.Config.ARGB_8888)
-        val canvas = android.graphics.Canvas(dest)
-        val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
-        canvas.drawBitmap(src, 0f, 0f, null)
-        paint.alpha = 100
-        canvas.drawBitmap(src, 1f, 1f, paint) 
-        releaseBitmap(src)
-        return dest
-    }
+    // 已迁移至 xyz.sakulik.comic.model.processor.ImageEnhanceEngine
 
     private fun openPdfSync() {
         if (pdfRenderer != null) return
@@ -850,6 +911,28 @@ class LocalArchivePageLoader(
                 bitmapPool.clear()
             }
         } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    private fun getRarVersion(channel: FileChannel): Int {
+        val originalPos = try { channel.position() } catch (e: Exception) { 0L }
+        try {
+            val buf = ByteBuffer.allocate(32)
+            channel.read(buf, 0L)
+            buf.flip()
+            if (buf.remaining() < 7) return 4
+            val sig = ByteArray(6)
+            buf.get(sig)
+            if (sig[0] == 0x52.toByte() && sig[1] == 0x61.toByte() && sig[2] == 0x72.toByte() &&
+                sig[3] == 0x21.toByte() && sig[4] == 0x1A.toByte() && sig[5] == 0x07.toByte()) {
+                val v = buf.get().toInt() and 0xFF
+                return if (v == 1) 5 else 4
+            }
+            return 4
+        } catch (e: Exception) { 
+            return 4 
+        } finally {
+            try { channel.position(originalPos) } catch (e: Exception) {}
+        }
     }
 
     private fun extractSevenZipToFile(archive: IInArchive, index: Int, targetFile: File) {

@@ -297,7 +297,8 @@ fun ComicAppNavHost() {
                         onToggleRtl = { readerViewModel.toggleRtl() },
                         onToggleSharpen = { readerViewModel.toggleSharpen() },
                         onToggleReaderMode = { readerViewModel.toggleReaderMode() },
-                        onToggleImmersive = { readerViewModel.setImmersive(it) }
+                        onToggleImmersive = { readerViewModel.setImmersive(it) },
+                        onSetAsCover = { page -> readerViewModel.setAsCover(page) }
                     )
                 }
                 is ComicState.Error -> {

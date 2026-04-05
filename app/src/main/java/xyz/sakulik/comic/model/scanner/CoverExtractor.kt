@@ -9,212 +9,282 @@ import android.net.Uri
 import com.github.junrar.Archive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileOutputStream
+import android.util.Log
+import java.io.*
+import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
+import java.util.zip.ZipFile
+import net.sf.sevenzipjbinding.*
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.channels.FileChannel
 
 object CoverExtractor {
 
+    private const val AUTO_SCAN_BYTES_LIMIT = 40 * 1024 * 1024L 
+    private const val AUTO_SCAN_ENTRIES_LIMIT = 50 
+
     suspend fun extractCover(context: Context, uri: Uri, extension: String, outPath: File): Boolean = withContext(Dispatchers.IO) {
+        val ext = extension.lowercase()
         try {
-            when (extension) {
+            when (ext) {
                 "pdf" -> extractPdfCover(context, uri, outPath)
                 "cbz", "zip" -> extractCbzCover(context, uri, outPath)
                 "cbr", "rar" -> extractCbrCover(context, uri, outPath)
                 else -> false
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("CoverExtractor", "Extract ($ext) FAIL: ${e.message}")
             false
         }
     }
 
+    suspend fun extractPageToCache(context: Context, uri: Uri, extension: String, pageIndex: Int, outPath: File): Boolean = withContext(Dispatchers.IO) {
+        try {
+            when (extension.lowercase()) {
+                "pdf" -> {
+                    context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                        PdfRenderer(pfd).use { renderer ->
+                            if (pageIndex in 0 until renderer.pageCount) {
+                                val page = renderer.openPage(pageIndex)
+                                val scale = 400f / page.width.coerceAtLeast(1)
+                                val bitmap = Bitmap.createBitmap((page.width * scale).toInt().coerceAtLeast(1), (page.height * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                                page.render(bitmap, null, Matrix().apply { postScale(scale, scale) }, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                                page.close()
+                                if (saveBitmapToWebp(bitmap, outPath)) {
+                                    bitmap.recycle(); return@withContext true
+                                }
+                            }
+                        }
+                    }
+                }
+                "cbz", "zip" -> {
+                    context.contentResolver.openInputStream(uri)?.use { fis ->
+                        ZipInputStream(fis).use { zis ->
+                            val names = mutableListOf<String>(); var entry: ZipEntry? = zis.nextEntry
+                            while (entry != null) {
+                                if (!entry.isDirectory && isImage(entry.name)) names.add(entry.name)
+                                entry = zis.nextEntry
+                            }
+                            names.sort()
+                            if (pageIndex in names.indices) return@withContext reOpenAndScanZip(context, uri, names[pageIndex], outPath)
+                        }
+                    }
+                }
+                "cbr", "rar" -> {
+                    context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                        val channel = java.io.FileInputStream(pfd.fileDescriptor).channel
+                        val version = getRarVersion(channel)
+                        return@withContext if (version == 5) extractRarV5PageNio(channel, pageIndex, outPath) else extractRarV4PageNio(channel, pageIndex, outPath)
+                    }
+                }
+            }
+        } catch (e: Exception) { Log.e("CoverExtractor", "Manual Extract Error", e) }
+        false
+    }
+
     private fun extractPdfCover(context: Context, uri: Uri, outPath: File): Boolean {
-        val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return false
-        pfd.use {
+        context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
             PdfRenderer(pfd).use { renderer ->
                 if (renderer.pageCount > 0) {
                     val page = renderer.openPage(0)
                     val scale = 400f / page.width.coerceAtLeast(1)
-                    val w = (page.width * scale).toInt().coerceAtLeast(1)
-                    val h = (page.height * scale).toInt().coerceAtLeast(1)
-
-                    val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                    bitmap.eraseColor(android.graphics.Color.WHITE)
-
-                    val matrix = Matrix().apply { postScale(scale, scale) }
-                    page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    val bitmap = Bitmap.createBitmap((page.width * scale).toInt().coerceAtLeast(1), (page.height * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                    page.render(bitmap, null, Matrix().apply { postScale(scale, scale) }, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                     page.close()
-
-                    saveBitmapToWebp(bitmap, outPath)
-                    bitmap.recycle()
+                    saveBitmapToWebp(bitmap, outPath); bitmap.recycle(); return true
                 }
             }
         }
-        return outPath.exists()
+        return false
     }
 
     private fun extractCbzCover(context: Context, uri: Uri, outPath: File): Boolean {
-        // [性能优化] 改为单次流式扫描：直接提取遇到的第一个合规图片文件
-        // 对于 CBZ 来说，通常封面就是第一个文件，无需两次遍历
-        try {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                val zis = ZipInputStream(input)
-                var entry = zis.nextEntry
-                while (entry != null) {
-                    if (!entry.isDirectory && isImage(entry.name)) {
-                        val bitmap = decodeStreamWithThreshold(context, zis)
-                        if (bitmap != null) {
-                            saveBitmapToWebp(bitmap, outPath)
-                            bitmap.recycle()
-                            return true
-                        }
+        if (uri.scheme == "file") {
+            try {
+                ZipFile(File(uri.path!!)).use { zip ->
+                    val entry = zip.entries().asSequence()
+                        .filter { !it.isDirectory && isImage(it.name) }
+                        .minByOrNull { it.name }
+                    if (entry != null) {
+                        zip.getInputStream(entry).use { return decodeAndSave(it, outPath) }
                     }
-                    zis.closeEntry()
-                    entry = zis.nextEntry
+                }
+            } catch (e: Exception) {}
+        }
+        try {
+            context.contentResolver.openInputStream(uri)?.use { fis ->
+                var byteCount = 0L; var entryCount = 0
+                ZipInputStream(fis).use { zis ->
+                    var entry = zis.nextEntry
+                    while (entry != null && byteCount < AUTO_SCAN_BYTES_LIMIT && entryCount < AUTO_SCAN_ENTRIES_LIMIT) {
+                        if (!entry.isDirectory && isImage(entry.name)) {
+                            Log.i("CoverExtractor", "Auto-Scan ZIP Matched: ${entry.name}")
+                            return decodeAndSave(zis, outPath)
+                        }
+                        byteCount += entry.compressedSize.coerceAtLeast(0); entryCount++; entry = zis.nextEntry
+                    }
                 }
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        } catch (e: Exception) { Log.e("CoverExtractor", "ZIP Stream Error", e) }
         return false
     }
 
     private fun extractCbrCover(context: Context, uri: Uri, outPath: File): Boolean {
-        // [性能优化] 识别本地文件路径，直接打开
-        if (uri.scheme == "file" || (uri.scheme == null && uri.path?.startsWith("/") == true)) {
-            val localFile = uri.path?.let { File(it) }
-            if (localFile?.exists() == true) {
-                return extractCbrFromFile(localFile, outPath)
-            }
-        }
-
-        // 如果是 SAF/Content Uri，不得不使用临时文件（junrar 需要 RandomAccess)
-        // 但我们这里可以稍微改进：如果文件非常大，只拷贝前 50MB 尝试提取（漫画封面通常在前 50MB 内）
-        val sessionId = java.util.UUID.randomUUID().toString()
-        val tempFile = File(context.cacheDir, "scan_temp_$sessionId.cbr")
         try {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(tempFile).use { output ->
-                    // 仅拷贝前 30MB，对于绝大多数漫画来说，文件头和封面都在这 30MB 里面
-                    // 这比拷贝 4GB 快了几个数量级
-                    val buffer = ByteArray(16384)
-                    var totalCopied = 0L
-                    val limit = 30 * 1024 * 1024L 
-                    while (totalCopied < limit) {
-                        val read = input.read(buffer)
-                        if (read == -1) break
-                        output.write(buffer, 0, read)
-                        totalCopied += read
-                    }
-                }
+            context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                val channel = java.io.FileInputStream(pfd.fileDescriptor).channel
+                val version = getRarVersion(channel)
+                Log.i("CoverExtractor", "Detecting CBR: Version=$version Size=${channel.size()}")
+                return if (version == 5) extractRarV5PageNio(channel, 0, outPath) else extractRarV4PageNio(channel, 0, outPath)
             }
-            
-            return if (tempFile.exists()) extractCbrFromFile(tempFile, outPath) else false
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return false
-        } finally {
-            tempFile.delete()
-        }
+        } catch (e: Exception) { Log.e("CoverExtractor", "CBR NIO Open Error", e) }
+        return false
     }
 
-    private fun extractCbrFromFile(file: File, outPath: File): Boolean {
+    private fun extractRarV5PageNio(channel: FileChannel, index: Int, outPath: File): Boolean {
         try {
-            Archive(file).use { archive ->
-                // 筛选出第一张合规图片
-                val firstImage = archive.fileHeaders
-                    .filter { !it.isDirectory && isImage(it.fileName) }
-                    .minByOrNull { it.fileName.lowercase() }
-                
-                if (firstImage != null) {
-                    archive.getInputStream(firstImage).use { imgIn ->
-                        val bitmap = decodeStreamWithThreshold(null, imgIn) // 这里 context 传 null 也没关系
-                        if (bitmap != null) {
-                            saveBitmapToWebp(bitmap, outPath)
-                            bitmap.recycle()
-                            return true
+            val inStream = SevenZipNioStream(channel)
+            SevenZip.openInArchive(null, inStream).use { szArchive ->
+                val images = mutableListOf<Pair<Int, String>>()
+                for (i in 0 until szArchive.numberOfItems) {
+                    val path = szArchive.getProperty(i, PropID.PATH) as? String ?: continue
+                    val isFolder = szArchive.getProperty(i, PropID.IS_FOLDER) as? Boolean ?: false
+                    if (!isFolder && isImage(path)) images.add(i to path)
+                }
+                images.sortBy { it.second }
+                if (index in images.indices) {
+                    val targetId = images[index].first
+                    val bos = ByteArrayOutputStream()
+                    szArchive.extract(intArrayOf(targetId), false, object : IArchiveExtractCallback {
+                        override fun getStream(idx: Int, askMode: ExtractAskMode?): ISequentialOutStream? {
+                            return if (askMode == ExtractAskMode.EXTRACT) ISequentialOutStream { data -> bos.write(data); data.size } else null
                         }
-                    }
+                        override fun prepareOperation(p0: ExtractAskMode?) {}
+                        override fun setOperationResult(p0: ExtractOperationResult?) {}
+                        override fun setCompleted(p0: Long) {}
+                        override fun setTotal(p0: Long) {}
+                    })
+                    return decodeAndSave(ByteArrayInputStream(bos.toByteArray()), outPath)
                 }
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
+        } catch (e: Exception) { Log.e("CoverExtractor", "SevenZip V5 Error", e) }
+        return false
+    }
+
+    private fun extractRarV4PageNio(channel: FileChannel, index: Int, outPath: File): Boolean {
+        try {
+            val volumeManager = RarVolumeManager(RarNioChannel(channel))
+            Archive(volumeManager, null, null).use { arc ->
+                val images = arc.fileHeaders.filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
+                if (index in images.indices) {
+                    arc.getInputStream(images[index]).use { return decodeAndSave(it, outPath) }
+                }
+            }
+        } catch (e: Exception) { Log.e("CoverExtractor", "Junrar V4 Error", e) }
+        return false
+    }
+
+    private fun getRarVersion(channel: FileChannel): Int {
+        return try {
+            val buf = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
+            channel.read(buf, 0); buf.flip()
+            if (buf.remaining() >= 7 && buf.get() == 0x52.toByte() && buf.get() == 0x61.toByte() && buf.get() == 0x72.toByte() &&
+                buf.get() == 0x21.toByte() && buf.get() == 0x1A.toByte() && buf.get() == 0x07.toByte()) {
+                if (buf.get() == 0x01.toByte()) 5 else 4
+            } else 4
+        } catch (e: Exception) { 4 }
+    }
+
+    private fun reOpenAndScanZip(context: Context, uri: Uri, target: String, outPath: File): Boolean {
+        context.contentResolver.openInputStream(uri)?.use { fis ->
+            ZipInputStream(fis).use { zis ->
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    if (entry.name == target) return decodeAndSave(zis, outPath)
+                    entry = zis.nextEntry
+                }
+            }
         }
         return false
     }
 
-    private fun decodeStreamWithThreshold(context: Context?, input: java.io.InputStream): Bitmap? {
-        val MAX_MEMORY_IMG_SIZE = 15 * 1024 * 1024 
-        val baos = java.io.ByteArrayOutputStream()
-        val buffer = ByteArray(16384)
-        var totalRead = 0
-        var exceeded = false
-        
-        while (true) {
-            val read = input.read(buffer)
-            if (read == -1) break
-            totalRead += read
-            if (totalRead > MAX_MEMORY_IMG_SIZE) {
-                exceeded = true
-                break
-            }
-            baos.write(buffer, 0, read)
-        }
-
-        if (!exceeded) {
-            val bytes = baos.toByteArray()
-            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-            options.inSampleSize = calculateInSampleSize(options, 400, 600)
-            options.inJustDecodeBounds = false
-            options.inPreferredConfig = Bitmap.Config.RGB_565
-            return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-        } else if (context != null) {
-            val tempImg = File(context.cacheDir, "scan_fallback_${java.util.UUID.randomUUID()}.tmp")
-            try {
-                FileOutputStream(tempImg).use { out ->
-                    baos.writeTo(out)
-                    input.copyTo(out)
-                }
-                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeFile(tempImg.absolutePath, options)
-                options.inSampleSize = calculateInSampleSize(options, 400, 600)
-                options.inJustDecodeBounds = false
-                options.inPreferredConfig = Bitmap.Config.RGB_565
-                return BitmapFactory.decodeFile(tempImg.absolutePath, options)
-            } finally {
-                tempImg.delete()
-            }
-        }
-        return null
+    private fun decodeAndSave(input: InputStream, outPath: File): Boolean {
+        try {
+            val bytes = input.readBytes()
+            if (bytes.isEmpty()) return false
+            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+            opts.inSampleSize = calculateInSampleSize(opts, 400, 600)
+            opts.inJustDecodeBounds = false
+            opts.inPreferredConfig = Bitmap.Config.RGB_565
+            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: return false
+            val success = saveBitmapToWebp(bitmap, outPath); bitmap.recycle(); return success
+        } catch (e: Exception) { return false }
     }
 
-    private fun saveBitmapToWebp(bitmap: Bitmap, outPath: File) {
-        FileOutputStream(outPath).use { out ->
-            // Android 11+ 可以用 WEBP_LOSSY, 这里处于兼容用 WEBP
-            @Suppress("DEPRECATION")
-            bitmap.compress(Bitmap.CompressFormat.WEBP, 75, out)
+    private fun saveBitmapToWebp(bitmap: Bitmap, outPath: File): Boolean {
+        return try {
+            FileOutputStream(outPath).use { b -> bitmap.compress(Bitmap.CompressFormat.WEBP, 75, b) }; true
+        } catch (e: Exception) { false }
+    }
+
+    private fun isImage(n: String): Boolean {
+        val l = n.lowercase(); return l.endsWith(".jpg") || l.endsWith(".jpeg") || l.endsWith(".png") || l.endsWith(".webp") || l.endsWith(".gif") || l.endsWith(".bmp")
+    }
+
+    private fun calculateInSampleSize(options: BitmapFactory.Options, rW: Int, rH: Int): Int {
+        val (h, w) = options.outHeight to options.outWidth; var s = 1
+        if (h > rH || w > rW) {
+            val hh = h / 2; val hw = w / 2
+            while (hh / s >= rH && hw / s >= rW) s *= 2
         }
+        return s
     }
 
-    private fun isImage(name: String): Boolean {
-        val lower = name.lowercase()
-        return lower.endsWith(".jpg") || lower.endsWith(".jpeg") ||
-               lower.endsWith(".png") || lower.endsWith(".webp")
-    }
-
-    private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
-        val (height: Int, width: Int) = options.outHeight to options.outWidth
-        var inSampleSize = 1
-
-        if (height > reqHeight || width > reqWidth) {
-            val halfHeight: Int = height / 2
-            val halfWidth: Int = width / 2
-            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
-                inSampleSize *= 2
+    private class SevenZipNioStream(private val channel: FileChannel) : IInStream {
+        override fun seek(offset: Long, origin: Int): Long {
+            val t = when (origin) {
+                IInStream.SEEK_SET -> offset
+                IInStream.SEEK_CUR -> channel.position() + offset
+                IInStream.SEEK_END -> channel.size() + offset
+                else -> channel.position()
             }
+            channel.position(t); return t
         }
-        return inSampleSize
+        override fun read(data: ByteArray): Int {
+            val b = ByteBuffer.wrap(data); val r = channel.read(b); return if (r < 0) 0 else r
+        }
+        override fun close() {}
+    }
+
+    private class RarNioChannel(private val channel: FileChannel) : com.github.junrar.io.SeekableReadOnlyByteChannel {
+        private var p: Long = 0; private val tb = ByteBuffer.allocate(8192); private var bp: Long = -1L
+        val size: Long get() = try { channel.size() } catch (e: Exception) { 0L }
+        override fun getPosition() = p; override fun setPosition(pos: Long) { p = pos }
+        override fun read(): Int {
+            if (bp == -1L || p < bp || p >= bp + tb.limit()) {
+                tb.clear(); val r = channel.read(tb, p); if (r <= 0) return -1
+                tb.flip(); bp = p
+            }
+            val b = tb.get((p - bp).toInt()).toInt() and 0xFF; p++; return b
+        }
+        override fun read(buffer: ByteArray, off: Int, count: Int): Int {
+            val bb = ByteBuffer.wrap(buffer, off, count); val r = channel.read(bb, p); if (r > 0) { p += r; bp = -1L }; return r
+        }
+        override fun readFully(buffer: ByteArray, count: Int): Int {
+            val bb = ByteBuffer.wrap(buffer, 0, count); var t = 0
+            while (t < count) { val r = channel.read(bb, p + t); if (r <= 0) break; t += r }
+            p += t; return t
+        }
+        override fun close() {}
+    }
+
+    private class RarVolume(private val nio: RarNioChannel, private var arc: com.github.junrar.Archive?) : com.github.junrar.volume.Volume {
+        override fun getChannel() = nio; override fun getLength() = nio.size; override fun getArchive() = arc!!
+    }
+
+    private class RarVolumeManager(private val nio: RarNioChannel) : com.github.junrar.volume.VolumeManager {
+        override fun nextVolume(arc: com.github.junrar.Archive?, last: com.github.junrar.volume.Volume?) = if (last == null) RarVolume(nio, arc) else null
     }
 }

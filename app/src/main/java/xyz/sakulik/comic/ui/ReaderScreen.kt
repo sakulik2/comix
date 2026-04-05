@@ -53,6 +53,7 @@ fun ReaderScreen(
     onToggleSharpen: () -> Unit,
     onToggleReaderMode: () -> Unit,
     onToggleImmersive: (Boolean) -> Unit,
+    onSetAsCover: (Int) -> Unit,
     modifier: Modifier = Modifier,
     isSharpenEnabled: Boolean = false,
 ) {
@@ -135,6 +136,8 @@ fun ReaderScreen(
     var webtoonScrollTarget by remember { mutableStateOf<Int?>(null) }
 
     val layoutDirection = if (isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
+
+    val snackbarHostState = remember { SnackbarHostState() }
 
     Box(modifier = modifier
         .fillMaxSize()
@@ -227,34 +230,75 @@ fun ReaderScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = onToggleSharpen) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_auto_awesome), 
-                            contentDescription = if (isSharpenEnabled) "关闭增强" else "开启增强",
-                            tint = if (isSharpenEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                        )
-                    }
                     IconButton(onClick = onToggleReaderMode) {
                         Icon(
                             painter = if (readerMode == ReaderMode.PAGER) painterResource(R.drawable.ic_vertical_distribute) else painterResource(R.drawable.ic_view_carousel), 
                             contentDescription = "切换模式"
                         )
                     }
-                    IconButton(onClick = onScrapeClick) {
-                        Icon(Icons.Default.Star, contentDescription = "刮削")
+
+                    var showMenu by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "更多选项")
+                        }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("设为封面") },
+                                leadingIcon = { Icon(Icons.Default.PhotoCamera, null) },
+                                onClick = {
+                                    showMenu = false
+                                    onSetAsCover(savedPage.intValue)
+                                    coroutineScope.launch {
+                                        snackbarHostState.showSnackbar("封面已更新并同步元数据")
+                                    }
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (isSharpenEnabled) "关闭画质增强" else "开启画质增强") },
+                                leadingIcon = { Icon(painterResource(R.drawable.ic_auto_awesome), null, tint = if (isSharpenEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
+                                onClick = {
+                                    showMenu = false
+                                    onToggleSharpen()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("手动搜索重刮削") },
+                                leadingIcon = { Icon(Icons.Default.Sync, null) },
+                                onClick = {
+                                    showMenu = false
+                                    onScrapeClick()
+                                }
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("从右向左翻页 (RTL)") },
+                                trailingIcon = {
+                                    Switch(
+                                        checked = isRtl,
+                                        onCheckedChange = { onToggleRtl() },
+                                        modifier = Modifier.scale(0.8f)
+                                    )
+                                },
+                                onClick = { onToggleRtl() }
+                            )
+                        }
                     }
-                    Text("RTL", style = MaterialTheme.typography.labelSmall)
-                    Switch(
-                        checked = isRtl,
-                        onCheckedChange = { onToggleRtl() },
-                        modifier = Modifier.scale(0.8f).padding(horizontal = 4.dp)
-                    )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.90f)
                 )
             )
         }
+
+        // 反馈提示
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp)
+        )
 
         // 页面跳转对话框
         var showJumpDialog by remember { mutableStateOf(false) }

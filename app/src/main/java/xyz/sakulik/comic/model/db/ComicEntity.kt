@@ -46,5 +46,8 @@ data class ComicEntity(
     val fileSize: Long = 0,
 
     // 备注与自定义别名 (Phase 4)
-    val remark: String? = null
+    val remark: String? = null,
+
+    // 用户自定义指定的封面页码 (0-indexed)
+    val customCoverPage: Int? = null
 )

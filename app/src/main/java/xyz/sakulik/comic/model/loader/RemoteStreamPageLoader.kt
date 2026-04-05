@@ -3,6 +3,7 @@ package xyz.sakulik.comic.model.loader
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import xyz.sakulik.comic.model.processor.ImageEnhanceEngine
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
@@ -59,22 +60,12 @@ class RemoteStreamPageLoader(
 
     private fun decodeAndApplyFilters(file: File): Bitmap? {
         val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return null
-        return if (isSharpenEnabled) sharpenBitmap(bitmap) else bitmap
+        return if (isSharpenEnabled) {
+            ImageEnhanceEngine.enhance(bitmap) { w, h, cfg -> Bitmap.createBitmap(w, h, cfg) }
+        } else bitmap
     }
 
-    private fun sharpenBitmap(src: Bitmap): Bitmap {
-        val amount = 1.3f
-        val colorMatrix = android.graphics.ColorMatrix(floatArrayOf(
-            amount, 0f, 0f, 0f, -0.1f * 255,
-            0f, amount, 0f, 0f, -0.1f * 255,
-            0f, 0f, amount, 0f, -0.1f * 255,
-            0f, 0f, 0f, 1f, 0f
-        ))
-        val paint = android.graphics.Paint().apply { colorFilter = android.graphics.ColorMatrixColorFilter(colorMatrix) }
-        val out = Bitmap.createBitmap(src.width, src.height, src.config)
-        android.graphics.Canvas(out).drawBitmap(src, 0f, 0f, paint)
-        return out
-    }
+    // 已迁移至 xyz.sakulik.comic.model.processor.ImageEnhanceEngine
 
     override fun releasePageData(data: Any?) {
         // 云端模式下目前主要依赖 Coil 自身缓存生命周期进行管理，

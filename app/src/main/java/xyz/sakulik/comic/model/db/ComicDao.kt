@@ -57,4 +57,7 @@ interface ComicDao {
 
     @Query("UPDATE comic_books SET remark = :remark WHERE id = :id")
     suspend fun updateRemark(id: Long, remark: String?): Int
+
+    @Query("UPDATE comic_books SET customCoverPage = :page WHERE id = :id")
+    suspend fun updateCustomCoverPage(id: Long, page: Int?): Int
 }
