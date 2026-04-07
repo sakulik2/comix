@@ -80,10 +80,15 @@ class BookshelfViewModel(
     init {
         // 冷启动即刻自动排查全部记录与图鉴，实现绝对同步
         scanAllFolders()
-        // 订阅 API Key 变更并同步推送给 RetrofitClient，使拦截器无需 runBlocking
+        // 订阅双端 API Key 变更并同步推送给 RetrofitClient，使拦截器无需 runBlocking
         viewModelScope.launch {
-            SettingsDataStore.getComicVineApiKeyFlow(application).collect { key ->
-                RetrofitClient.updateApiKey(key)
+            kotlinx.coroutines.flow.combine(
+                SettingsDataStore.getComicVineApiKeyFlow(application),
+                SettingsDataStore.getComicApiTokenFlow(application)
+            ) { vineKey, comixToken ->
+                vineKey to comixToken
+            }.collect { (vineKey, comixToken) ->
+                RetrofitClient.updateTokens(vineKey, comixToken)
             }
         }
     }
@@ -386,6 +391,12 @@ class BookshelfViewModel(
         }
     }
 
+    fun saveCloudToken(token: String) {
+        viewModelScope.launch {
+            SettingsDataStore.saveComicApiToken(getApplication(), token)
+        }
+    }
+
     /**
      * 从网络服务拉取远端漫画列表并同步到本地数据库
      */
@@ -432,14 +443,26 @@ class BookshelfViewModel(
                                 source = ComicSource.REMOTE,
                                 location = item.id,
                                 coverCachePath = absoluteCoverUrl,
-                                seriesName = item.originalName.substringBeforeLast(".")
+                                seriesName = item.originalName.substringBeforeLast("."),
+                                summary = item.summary,
+                                authors = item.authors,
+                                rating = item.rating,
+                                genres = item.genres,
+                                publisher = item.publisher,
+                                year = item.year
                             )
                             dao.insert(newComic)
                         } else {
                             Log.d("BookshelfSync", "更新记录: ${item.originalName}")
                             val updated = existing.copy(
                                 totalPages = item.totalPages,
-                                coverCachePath = absoluteCoverUrl
+                                coverCachePath = absoluteCoverUrl,
+                                summary = item.summary ?: existing.summary,
+                                authors = item.authors ?: existing.authors,
+                                rating = item.rating ?: existing.rating,
+                                genres = item.genres ?: existing.genres,
+                                publisher = item.publisher ?: existing.publisher,
+                                year = item.year ?: existing.year
                             )
                             dao.update(updated)
                         }

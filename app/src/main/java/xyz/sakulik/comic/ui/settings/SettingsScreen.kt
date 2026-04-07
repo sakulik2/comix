@@ -1,12 +1,16 @@
 package xyz.sakulik.comic.ui.settings
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import xyz.sakulik.comic.model.preferences.SettingsDataStore
@@ -26,6 +30,9 @@ fun SettingsScreen(
     val savedApiUrl by SettingsDataStore.getComicApiBaseUrlFlow(context).collectAsState(initial = "https://comix.sakulik.xyz/")
     var apiUrlInput by remember(savedApiUrl) { mutableStateOf(savedApiUrl ?: "https://comix.sakulik.xyz/") }
 
+    val savedApiToken by SettingsDataStore.getComicApiTokenFlow(context).collectAsState(initial = "")
+    var apiTokenInput by remember(savedApiToken) { mutableStateOf(savedApiToken ?: "") }
+
     val remoteEnabled by SettingsDataStore.getRemoteEnabledFlow(context).collectAsState(initial = true)
 
     Scaffold(
@@ -41,152 +48,192 @@ fun SettingsScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
-        Column(modifier = Modifier.padding(padding).padding(16.dp).fillMaxSize()) {
-            Text("安全认证核心配置", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-            Spacer(modifier = Modifier.height(16.dp))
-            OutlinedTextField(
-                value = apiKeyInput,
-                onValueChange = { apiKeyInput = it },
-                label = { Text("ComicVine API Key") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            Text("云端同步核心控制", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("开启云端同步功能", style = MaterialTheme.typography.bodyLarge)
-                    Text("关闭后将隐藏同步按钮及所有云端漫画", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Switch(
-                    checked = remoteEnabled,
-                    onCheckedChange = { 
-                        scope.launch { SettingsDataStore.saveRemoteEnabled(context, it) }
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+        ) {
+            // --- Group 0: 安全与授权 ---
+            SettingsSectionTitle("安全与授权")
+            SettingsSurface {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    OutlinedTextField(
+                        value = apiKeyInput,
+                        onValueChange = { apiKeyInput = it },
+                        label = { Text("ComicVine API Key") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation()
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                SettingsDataStore.saveComicVineApiKey(context, apiKeyInput)
+                                snackbarHostState.showSnackbar("✅ API Key 已保存")
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("保存认证配置")
                     }
-                )
-            }
-            
-            if (remoteEnabled) {
-                Spacer(modifier = Modifier.height(16.dp))
-                Text("云端流媒体服务配置", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.height(16.dp))
-                OutlinedTextField(
-                    value = apiUrlInput,
-                    onValueChange = { apiUrlInput = it },
-                    label = { Text("Comix API Base URL") },
-                    placeholder = { Text("https://comix.sakulik.xyz/") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
-            Button(
-                onClick = {
-                    scope.launch {
-                        SettingsDataStore.saveComicVineApiKey(context, apiKeyInput)
-                        if (remoteEnabled) {
-                            SettingsDataStore.saveComicApiBaseUrl(context, apiUrlInput)
+
+            // --- Group 1: 云端流媒体库 ---
+            SettingsSectionTitle("云端流媒体库")
+            SettingsSurface {
+                Column {
+                    SettingsSwitchRow(
+                        title = "开启云端同步功能",
+                        subtitle = "关闭后将隐藏同步按钮及所有云端漫画",
+                        checked = remoteEnabled,
+                        onCheckedChange = { scope.launch { SettingsDataStore.saveRemoteEnabled(context, it) } }
+                    )
+                    if (remoteEnabled) {
+                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            OutlinedTextField(
+                                value = apiUrlInput,
+                                onValueChange = { apiUrlInput = it },
+                                label = { Text("Comix API Base URL") },
+                                placeholder = { Text("https://comix.sakulik.xyz/") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = apiTokenInput,
+                                onValueChange = { apiTokenInput = it },
+                                label = { Text("Comix API Token") },
+                                placeholder = { Text("留空表示服务端未加密") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation()
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        SettingsDataStore.saveComicApiBaseUrl(context, apiUrlInput)
+                                        SettingsDataStore.saveComicApiToken(context, apiTokenInput)
+                                        snackbarHostState.showSnackbar("✅ 云端配置已保存")
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("保存云端配置")
+                            }
+                            Spacer(modifier = Modifier.height(24.dp))
+                            Text("危险区域", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedButton(
+                                onClick = onClearRemoteLibrary,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error)
+                            ) {
+                                Text("清除本地全量云端数据索引")
+                            }
+                            Text("此操作不可逆，将从本地数据库中移除远程漫画记录", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp))
                         }
-                        onBack()
                     }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("保存基础配置")
-            }
-            
-            Spacer(modifier = Modifier.height(24.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            Text("危险区域", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = onClearRemoteLibrary,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error)
-            ) {
-                Text("清除本地全量云端数据索引")
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                "注意：此操作不可逆，将从数据库中移除所有云端漫画记录",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-            Text("个性化体验", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            val metadataEnabled by SettingsDataStore.getMetadataEnabledFlow(context).collectAsState(initial = true)
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("启用智能元数据", style = MaterialTheme.typography.bodyLarge)
-                    Text("关闭后将停止系列聚合并显示原始文件名", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Switch(
-                    checked = metadataEnabled,
-                    onCheckedChange = { 
-                        scope.launch { SettingsDataStore.saveMetadataEnabled(context, it) }
-                    }
-                )
-            }
-            
-            Spacer(modifier = Modifier.height(24.dp))
-            Text("存储管理", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-            Spacer(modifier = Modifier.height(8.dp))
-
-            val autoClearCovers by SettingsDataStore.getAutoClearCoversFlow(context).collectAsState(initial = false)
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("启动时自动清理封面", style = MaterialTheme.typography.bodyLarge)
-                    Text("极致瘦身模式开启后每次重启应用都会重置封面库占用的空间", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Switch(
-                    checked = autoClearCovers,
-                    onCheckedChange = { 
-                        scope.launch { SettingsDataStore.saveAutoClearCovers(context, it) }
-                    }
-                )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = {
-                    scope.launch {
-                        //\ 1 清理全量缓存目录 (Reader 残留)
-                        context.cacheDir.listFiles()?.forEach { it.deleteRecursively() }
-                        //\ 2 清理持久化封面
-                        val coverDir = java.io.File(context.filesDir, "covers")
-                        if (coverDir.exists()) coverDir.deleteRecursively()
-                        
-                        snackbarHostState.showSnackbar("✅ 所有缓存与封面已清理完毕")
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("手动一键清理全量数据")
-            }
-            
             Spacer(modifier = Modifier.height(16.dp))
-            Spacer(modifier = Modifier.weight(1f))
+
+            // --- Group 2: 全局刮削器 ---
+            SettingsSectionTitle("全局漫库刮削器")
+            val metadataEnabled by SettingsDataStore.getMetadataEnabledFlow(context).collectAsState(initial = true)
+            SettingsSurface {
+                Column {
+                    SettingsSwitchRow(
+                        title = "启用智能元数据",
+                        subtitle = "关闭后将停止系列聚合并显示原始文件名",
+                        checked = metadataEnabled,
+                        onCheckedChange = { scope.launch { SettingsDataStore.saveMetadataEnabled(context, it) } }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // --- Group 3: 存储管理 ---
+            SettingsSectionTitle("本地存储管理")
+            val autoClearCovers by SettingsDataStore.getAutoClearCoversFlow(context).collectAsState(initial = false)
+            SettingsSurface {
+                Column {
+                    SettingsSwitchRow(
+                        title = "启动时自动清理封面",
+                        subtitle = "极致瘦身模式，每次重启应用都会重置封面缓存",
+                        checked = autoClearCovers,
+                        onCheckedChange = { scope.launch { SettingsDataStore.saveAutoClearCovers(context, it) } }
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    context.cacheDir.listFiles()?.forEach { it.deleteRecursively() }
+                                    val coverDir = java.io.File(context.filesDir, "covers")
+                                    if (coverDir.exists()) coverDir.deleteRecursively()
+                                    snackbarHostState.showSnackbar("✅ 所有缓存与封面已清理完毕")
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("手动一键清理全量应用缓存")
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
         }
+    }
+}
+
+// 提取的通用 UI 组件
+@Composable
+private fun SettingsSectionTitle(title: String) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
+    )
+}
+
+@Composable
+private fun SettingsSurface(content: @Composable () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun SettingsSwitchRow(title: String, subtitle: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }

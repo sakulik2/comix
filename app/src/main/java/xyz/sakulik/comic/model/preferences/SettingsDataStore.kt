@@ -21,6 +21,7 @@ object SettingsDataStore {
     // 用于保存用户自定义输入在 Settings 页的 Vine 特有 API Key
     private val COMIC_VINE_API_KEY = stringPreferencesKey("comic_vine_api_key")
     private val COMIC_API_BASE_URL = stringPreferencesKey("comic_api_base_url")
+    private val COMIC_API_TOKEN = stringPreferencesKey("comic_api_token")
     private val REMOTE_ENABLED = booleanPreferencesKey("remote_enabled")
     private val METADATA_ENABLED = booleanPreferencesKey("metadata_enabled")
     private val AUTO_CLEAR_COVERS = booleanPreferencesKey("auto_clear_covers")
@@ -58,6 +59,24 @@ object SettingsDataStore {
     suspend fun saveComicApiBaseUrl(context: Context, baseUrl: String) {
         context.dataStore.edit { preferences ->
             preferences[COMIC_API_BASE_URL] = baseUrl.trim()
+        }
+    }
+
+    /**
+     * 获取云端服务器 API Token
+     */
+    fun getComicApiTokenFlow(context: Context): Flow<String?> {
+        return context.dataStore.data.map { preferences ->
+            preferences[COMIC_API_TOKEN]
+        }
+    }
+
+    /**
+     * 保存云端服务器 API Token
+     */
+    suspend fun saveComicApiToken(context: Context, token: String) {
+        context.dataStore.edit { preferences ->
+            preferences[COMIC_API_TOKEN] = token.trim()
         }
     }
 

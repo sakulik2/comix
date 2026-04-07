@@ -20,6 +20,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import xyz.sakulik.comic.model.db.ComicEntity
@@ -35,6 +37,11 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.graphics.BlurEffect
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.unit.sp
 import xyz.sakulik.comic.R
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
@@ -310,217 +317,173 @@ fun BookshelfScreen(
                 showDeleteOptions = false
             },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            dragHandle = { BottomSheetDefaults.DragHandle() }
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
+            dragHandle = null // 自定义 Header
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
+                    .verticalScroll(rememberScrollState())
                     .navigationBarsPadding()
             ) {
-                // [优化：平滑颜色过渡]
-                val dangerZoneColor by androidx.compose.animation.animateColorAsState(
-                    targetValue = if (showDeleteOptions) 
-                        MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f) 
-                    else 
-                        MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.1f),
-                    label = "DangerZoneColor"
-                )
-                
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 8.dp, bottom = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = comic.title,
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
+                // [沉浸式 Header 区域]
+                Box(modifier = Modifier.fillMaxWidth().height(240.dp)) {
+                    val model = if (comic.source == ComicSource.REMOTE) comic.coverCachePath else File(comic.coverCachePath ?: "")
+                    
+                    // 背景高斯模糊效果 (使用 Unbounded 确保铺满无白边)
+                    AsyncImage(
+                        model = model,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize().blur(24.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded),
+                        contentScale = ContentScale.Crop,
+                        alpha = 0.3f
                     )
-                    IconButton(onClick = { contextComic = null }) {
-                        Icon(Icons.Default.Close, contentDescription = "关闭", tint = MaterialTheme.colorScheme.outline)
-                    }
-                }
-
-                HorizontalDivider()
-                Spacer(Modifier.height(8.dp))
-
-                // 核心阅读操作 (恢复原样)
-                ListItem(
-                    headlineContent = { Text("从头开始", style = MaterialTheme.typography.bodyLarge) },
-                    supportingContent = { Text("清除当前阅读进度并返回第一页", style = MaterialTheme.typography.labelSmall) },
-                    leadingContent = {
-                        Surface(color = MaterialTheme.colorScheme.tertiaryContainer, shape = RoundedCornerShape(12.dp)) {
-                            Icon(Icons.Default.Refresh, null, modifier = Modifier.padding(8.dp).size(20.dp), tint = MaterialTheme.colorScheme.onTertiaryContainer)
+                    
+                    Row(
+                        modifier = Modifier.fillMaxSize().padding(24.dp).padding(top = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            modifier = Modifier.width(130.dp).aspectRatio(0.7f).clip(RoundedCornerShape(12.dp)),
+                            shadowElevation = 12.dp
+                        ) {
+                            AsyncImage(model = model, contentDescription = null, contentScale = ContentScale.Crop)
                         }
-                    },
-                    modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable { viewModel.resetComicProgress(comic); contextComic = null },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-                )
-                
-                ListItem(
-                    headlineContent = { Text("一键自动刮削", style = MaterialTheme.typography.bodyLarge) },
-                    supportingContent = { Text("AI 智能匹配补全封面与详情", style = MaterialTheme.typography.labelSmall) },
-                    leadingContent = {
-                        val isScraping = autoScrapeState is AutoScrapeState.Loading && (autoScrapeState as AutoScrapeState.Loading).comicId == comic.id
-                        if (isScraping) CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                        else Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(12.dp)) {
-                            Icon(painterResource(R.drawable.ic_auto_awesome), null, modifier = Modifier.padding(8.dp).size(20.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
-                        }
-                    },
-                    modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable { viewModel.autoScrape(comic); contextComic = null },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-                )
-
-                ListItem(
-                    headlineContent = { Text("加入合集", style = MaterialTheme.typography.bodyLarge) },
-                    supportingContent = { Text("将此漫画分类到您的手动合集中", style = MaterialTheme.typography.labelSmall) },
-                    leadingContent = {
-                        Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(12.dp)) {
-                            Icon(Icons.Default.LibraryAdd, null, modifier = Modifier.padding(8.dp).size(20.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
-                        }
-                    },
-                    modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable { showAddToCollectionDialog = comic; contextComic = null },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // [优化：折叠式元数据管理]
-                Surface(
-                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.2f),
-                    shape = RoundedCornerShape(20.dp),
-                    modifier = Modifier.fillMaxWidth().animateContentSize()
-                ) {
-                    Column {
-                        ListItem(
-                            headlineContent = { Text("元数据管理", style = MaterialTheme.typography.bodyLarge) },
-                            supportingContent = { Text("查看详情、手动搜索或编辑字段", style = MaterialTheme.typography.labelSmall) },
-                            leadingContent = { Icon(Icons.AutoMirrored.Filled.ManageSearch, null, tint = MaterialTheme.colorScheme.secondary) },
-                            trailingContent = { Icon(if (showMetadataOptions) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
-                            modifier = Modifier.clickable { showMetadataOptions = !showMetadataOptions },
-                            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-                        )
                         
-                        if (showMetadataOptions) {
-                            Column(Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp)) {
-                                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f))
-                                ListItem(
-                                    headlineContent = { Text("查看详细元数据", style = MaterialTheme.typography.bodyMedium) },
-                                    leadingContent = { Icon(Icons.Default.Info, null, modifier = Modifier.size(18.dp)) },
-                                    modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { showMetadataDialog = comic; contextComic = null },
-                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-                                )
-                                ListItem(
-                                    headlineContent = { Text("搜索元数据", style = MaterialTheme.typography.bodyMedium) },
-                                    leadingContent = { Icon(Icons.Default.Search, null, modifier = Modifier.size(18.dp)) },
-                                    modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { onManualScrapeClick(comic); contextComic = null },
-                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-                                )
-                                ListItem(
-                                    headlineContent = { Text("手动编辑字段", style = MaterialTheme.typography.bodyMedium) },
-                                    leadingContent = { Icon(Icons.Default.Edit, null, modifier = Modifier.size(18.dp)) },
-                                    modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { showEditorDialog = comic; contextComic = null },
-                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                        Spacer(Modifier.width(20.dp))
+                        
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = comic.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            
+                            if (!comic.authors.isNullOrBlank()) {
+                                Text(text = comic.authors, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(vertical = 4.dp))
+                            }
+                            
+                            if (!comic.year.isNullOrBlank()) {
+                                Text(text = comic.year, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline)
+                            }
+                            
+                            if (!comic.genres.isNullOrBlank()) {
+                                AssistChip(
+                                    onClick = {},
+                                    label = { Text(comic.genres.split(",").firstOrNull()?.trim() ?: "") },
+                                    modifier = Modifier.padding(top = 8.dp),
+                                    border = null,
+                                    colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                                 )
                             }
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                // [内容区域]
+                Column(modifier = Modifier.padding(horizontal = 24.dp)) {
+                    if (!comic.summary.isNullOrBlank()) {
+                        Text(text = "剧情简介", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = comic.summary,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 12.dp),
+                            lineHeight = 22.sp
+                        )
+                    }
+                    
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                    
+                    // 快捷操作 Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        QuickActionItem(Icons.Default.PlayArrow, "阅读", MaterialTheme.colorScheme.primary) { onComicClick(comic); contextComic = null }
+                        QuickActionItem(Icons.Default.Refresh, "重置", MaterialTheme.colorScheme.error) { viewModel.resetComicProgress(comic); contextComic = null }
+                        QuickActionItem(Icons.Default.AutoAwesome, "刮削", MaterialTheme.colorScheme.secondary) { viewModel.autoScrape(comic); contextComic = null }
+                        QuickActionItem(Icons.Default.LibraryAdd, "合集", MaterialTheme.colorScheme.tertiary) { showAddToCollectionDialog = comic; contextComic = null }
+                        QuickActionItem(Icons.Default.Info, "详情", MaterialTheme.colorScheme.outline) { showMetadataDialog = comic; contextComic = null }
+                    }
 
-                // [优化：优雅的折叠式危险区]
-                Surface(
-                    color = dangerZoneColor,
-                    shape = RoundedCornerShape(24.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .animateContentSize(
-                            animationSpec = androidx.compose.animation.core.spring(
-                                dampingRatio = androidx.compose.animation.core.Spring.DampingRatioLowBouncy,
-                                stiffness = androidx.compose.animation.core.Spring.StiffnessLow
+                    // 元数据深度管理区 (折叠)
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                    ) {
+                        Column {
+                            ListItem(
+                                headlineContent = { Text("元数据深度管理", style = MaterialTheme.typography.labelLarge) },
+                                trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, modifier = Modifier.size(16.dp)) },
+                                modifier = Modifier.clickable { showMetadataOptions = !showMetadataOptions },
+                                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                             )
-                        )
-                ) {
-                    Column {
-                        ListItem(
-                            headlineContent = { Text(if (showDeleteOptions) "确认删除操作" else "移除与删除", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error) },
-                            supportingContent = { Text(if (showDeleteOptions) "请谨慎选择以下操作" else "点击展开高级删除选项", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onErrorContainer) },
-                            leadingContent = {
-                                Icon(
-                                    if (showDeleteOptions) Icons.Default.KeyboardArrowDown else Icons.Default.Delete, 
-                                    contentDescription = null, 
-                                    tint = MaterialTheme.colorScheme.error
-                                )
-                            },
-                            trailingContent = {
-                                if (!showDeleteOptions) {
-                                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
-                                }
-                            },
-                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(20.dp))
-                                .clickable { showDeleteOptions = !showDeleteOptions }
-                        )
-
-                        // [优化：移除冗余的 AnimatedVisibility，改用简单 if 配合 animateContentSize]
-                        if (showDeleteOptions) {
-                            Column(
-                                modifier = Modifier
-                                    .padding(horizontal = 12.dp)
-                                    .padding(bottom = 12.dp)
-                            ) {
-                                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error.copy(alpha = 0.2f))
-                                
-                                // 选项 1: 仅从书架移除
-                                ListItem(
-                                    headlineContent = { Text("仅从书架移除", style = MaterialTheme.typography.bodyMedium) },
-                                    supportingContent = { Text("保留本地文件，仅清除索引", style = MaterialTheme.typography.labelSmall) },
-                                    leadingContent = { Icon(Icons.Default.Book, null, modifier = Modifier.size(18.dp)) },
-                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .clickable { 
-                                            viewModel.deleteComic(comic)
-                                            contextComic = null
-                                            showDeleteOptions = false
-                                        }
-                                )
-
-                                // 选项 2: 彻底删除文件 (仅对本地文件有效)
-                                if (comic.source == ComicSource.LOCAL) {
+                            
+                            if (showMetadataOptions) {
+                                Column(modifier = Modifier.padding(bottom = 8.dp)) {
                                     ListItem(
-                                        headlineContent = { Text("彻底删除物理文件", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) },
-                                        supportingContent = { Text("警告：将从磁盘永久删除，不可恢复", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onErrorContainer) },
-                                        leadingContent = { Icon(Icons.Default.Warning, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.error) },
-                                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .clickable { 
-                                                viewModel.deleteComicAndFile(comic)
-                                                contextComic = null
-                                                showDeleteOptions = false
-                                            }
+                                        headlineContent = { Text("手动编辑字段", style = MaterialTheme.typography.bodyMedium) },
+                                        leadingContent = { Icon(Icons.Default.EditNote, null, modifier = Modifier.size(20.dp)) },
+                                        modifier = Modifier.clickable { showEditorDialog = comic; contextComic = null },
+                                        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                                    )
+                                    ListItem(
+                                        headlineContent = { Text("手动搜索元数据", style = MaterialTheme.typography.bodyMedium) },
+                                        leadingContent = { Icon(Icons.AutoMirrored.Filled.ManageSearch, null, modifier = Modifier.size(20.dp)) },
+                                        modifier = Modifier.clickable { onManualScrapeClick(comic); contextComic = null },
+                                        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                                     )
                                 }
                             }
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // 危险动作折叠区 (保留原有逻辑，但外观收敛)
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.1f),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth().clickable { showDeleteOptions = !showDeleteOptions }
+                    ) {
+                        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error)
+                            Spacer(Modifier.width(12.dp))
+                            Text(text = "高级管理选项", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.error)
+                            Spacer(Modifier.weight(1f))
+                            Icon(if (showDeleteOptions) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+
+                    if (showDeleteOptions) {
+                        Column(modifier = Modifier.padding(top = 8.dp)) {
+                            // 选项 1: 仅从书架移除 (安全操作)
+                            ListItem(
+                                headlineContent = { Text("仅从书架移除", color = MaterialTheme.colorScheme.error) },
+                                supportingContent = { Text("保留本地文件，仅清除数据库记录", style = MaterialTheme.typography.labelSmall) },
+                                leadingContent = { Icon(Icons.Default.FolderDelete, null, tint = MaterialTheme.colorScheme.error) },
+                                modifier = Modifier.clickable { 
+                                    viewModel.deleteComic(comic)
+                                    contextComic = null
+                                    showDeleteOptions = false
+                                },
+                                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                            )
+                            
+                            // 选项 2: 彻底删除物理文件 (仅限本地漫画)
+                            if (comic.source == ComicSource.LOCAL) {
+                                ListItem(
+                                    headlineContent = { Text("彻底删除物理文件", color = MaterialTheme.colorScheme.error) },
+                                    supportingContent = { Text("警告：将从磁盘永久删除，不可恢复", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)) },
+                                    leadingContent = { Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error) },
+                                    modifier = Modifier.clickable { viewModel.deleteComicAndFile(comic); contextComic = null },
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                                )
+                            }
+                        }
+                    }
                 }
 
-                Spacer(Modifier.height(32.dp))
+                Spacer(modifier = Modifier.height(48.dp))
             }
         }
     }
@@ -531,6 +494,8 @@ fun BookshelfScreen(
 
     if (showApiDialog) {
         var inputUrl by remember { mutableStateOf("https://comix.sakulik.xyz/") }
+        var inputToken by remember { mutableStateOf("") }
+        
         AlertDialog(
             onDismissRequest = { showApiDialog = false },
             title = { Text("添加远程 API 地址", style = MaterialTheme.typography.titleMedium) },
@@ -546,12 +511,25 @@ fun BookshelfScreen(
                         placeholder = { Text("http://api..") },
                         leadingIcon = { Icon(painterResource(id = xyz.sakulik.comic.R.drawable.ic_link), contentDescription = null) }
                     )
+                    Spacer(Modifier.height(16.dp))
+                    Text("访问令牌 (Token)：", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = inputToken,
+                        onValueChange = { inputToken = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        placeholder = { Text("留空表示不鉴权") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        leadingIcon = { Icon(Icons.Default.VpnKey, contentDescription = null) }
+                    )
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
                     if (inputUrl.isNotBlank()) {
                         viewModel.saveCloudApi(inputUrl)
+                        viewModel.saveCloudToken(inputToken)
                         showApiDialog = false
                     }
                 }) {
@@ -671,6 +649,17 @@ fun ComicSwimlaneItem(
             Box(modifier = Modifier.aspectRatio(0.7f).fillMaxWidth()) {
                 AsyncImage(model = model, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 
+                // [元数据 2.0]：来源徽标 (云端/本地)
+                if (comic.source == ComicSource.REMOTE) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
+                        shape = RoundedCornerShape(bottomEnd = 8.dp),
+                        modifier = Modifier.align(Alignment.TopStart)
+                    ) {
+                        Icon(Icons.Default.CloudSync, null, modifier = Modifier.padding(4.dp).size(12.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                }
+
                 if (displayBadge != null) {
                     Surface(
                         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
@@ -687,11 +676,12 @@ fun ComicSwimlaneItem(
             }
             Text(
                 text = displayTitle,
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.labelMedium,
                 maxLines = 2,
                 minLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(8.dp)
+                modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp, top = 4.dp),
+                fontWeight = FontWeight.Medium
             )
         }
     }
@@ -723,6 +713,17 @@ fun ComicItem(
             Box(modifier = Modifier.aspectRatio(0.7f).fillMaxWidth()) {
                 AsyncImage(model = model, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 
+                // [元数据 2.0]：来源徽标 (云端/本地)
+                if (comic.source == ComicSource.REMOTE) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
+                        shape = RoundedCornerShape(bottomEnd = 8.dp),
+                        modifier = Modifier.align(Alignment.TopStart)
+                    ) {
+                        Icon(Icons.Default.CloudSync, null, modifier = Modifier.padding(4.dp).size(14.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                }
+
                 if (item.displayBadge != null) {
                     Surface(
                         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
@@ -745,7 +746,8 @@ fun ComicItem(
                 maxLines = 2, 
                 minLines = 2, 
                 overflow = TextOverflow.Ellipsis, 
-                modifier = Modifier.padding(8.dp)
+                modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp, top = 4.dp),
+                fontWeight = FontWeight.Medium
             )
         }
     }

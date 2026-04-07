@@ -40,7 +40,11 @@ class ComicPageLoaderFactory(private val context: Context) {
                     Uri.fromFile(java.io.File(comic.location))
                 }
                 
-                LocalArchivePageLoader(context, uri, comic.extension)
+                if (comic.extension.lowercase() == "pdf") {
+                    LocalPdfPageLoader(context, uri)
+                } else {
+                    LocalArchivePageLoader(context, uri, comic.extension)
+                }
             }
             ComicSource.REMOTE -> {
                 val baseUrl = SettingsDataStore.getComicApiBaseUrlFlow(context).firstOrNull() ?: "https://comix.sakulik.xyz/"

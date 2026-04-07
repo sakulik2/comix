@@ -68,10 +68,6 @@ class LocalArchivePageLoader(
     
     // 档案条目信息缓存（按文件名排序确保页码一致性）
     private var cachedEntries: List<String>? = null
-    
-    // PDF 特有状态
-    private var pdfPfd: android.os.ParcelFileDescriptor? = null
-    private var pdfRenderer: PdfRenderer? = null
 
     // 图像增强开关
     private var isSharpenEnabled = false
@@ -404,10 +400,6 @@ class LocalArchivePageLoader(
                     return@withLock 0
                 }
 
-                if (extension.lowercase() == "pdf") {
-                    openPdfSync()
-                    return@withLock pdfRenderer?.pageCount ?: 0
-                }
 
                 val names = mutableListOf<String>()
                 when (extension.lowercase()) {
@@ -449,10 +441,8 @@ class LocalArchivePageLoader(
     }
 
    override suspend fun getPageData(pageIndex: Int, width: Int, height: Int): Any? = withContext(Dispatchers.IO) {
-        // 1. 缓存优先 (支持预读图片或预渲染 PDF)
+        // 1. 缓存优先 (支持预读图片)
         extractedFiles[pageIndex]?.let { if (it.exists()) return@withContext decodeImageFile(it, width, height) }
-
-        if (extension.lowercase() == "pdf") return@withContext loadPdfPage(pageIndex, width, height)
 
         // 快速检查：如果协程已取消（用户已划走），直接退出，不争夺锁
         ensureActive()
@@ -727,11 +717,6 @@ class LocalArchivePageLoader(
                                         extractedFiles[idx] = cacheFile
                                     }
                                 }
-                                "pdf" -> {
-                                    // [PDF 核心优化]：利用后台空闲 IO 预渲染临近页面
-                                    renderPdfToCache(idx)
-                                }
-                                else -> {}
                             }
                         }
                     }
@@ -768,85 +753,8 @@ class LocalArchivePageLoader(
         }
     }
 
-    private suspend fun loadPdfPage(pageIndex: Int, reqWidth: Int, reqHeight: Int): Bitmap? = archiveMutex.withLock {
-        try {
-            openPdfSync()
-            val renderer = pdfRenderer ?: return@withLock null
-            if (pageIndex !in 0 until renderer.pageCount) return@withLock null
-            val page = renderer.openPage(pageIndex)
-            val scale = (minOf(reqWidth.toFloat() / page.width, reqHeight.toFloat() / page.height)).coerceAtMost(2f)
-            val w = (page.width * scale).toInt().coerceAtLeast(1)
-            val h = (page.height * scale).toInt().coerceAtLeast(1)
-            
-            // [性能优化] 接入 Bitmap 内存池
-            val bitmap = obtainBitmap(w, h, Bitmap.Config.RGB_565)
-            bitmap.eraseColor(android.graphics.Color.WHITE)
-            val matrix = Matrix().apply { postScale(scale, scale) }
-            
-            android.util.Log.v("ArchiveLoader", "PDF Sync Render: $pageIndex @ ${scale}x")
-            page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-            page.close()
-            return@withLock if (isSharpenEnabled) {
-                ImageEnhanceEngine.enhance(bitmap) { w, h, cfg -> obtainBitmap(w, h, cfg) }
-            } else bitmap
-        } catch (e: Exception) { 
-            android.util.Log.e("ArchiveLoader", "PDF Load Error: ${e.message}")
-            return@withLock null 
-        }
-    }
-
-    private fun renderPdfToCache(pageIndex: Int) {
-        val file = File(sessionDir, "p_$pageIndex.tmp")
-        if (file.exists()) {
-            extractedFiles[pageIndex] = file
-            return
-        }
-        
-        try {
-            // 注意：此处由 extractWindow 的 archiveMutex 保护，外部已加锁
-            openPdfSync()
-            val renderer = pdfRenderer ?: return
-            if (pageIndex !in 0 until renderer.pageCount) return
-            
-            val page = renderer.openPage(pageIndex)
-            // 预渲染使用 1.5x 固定中等采样率
-            val scale = 1.5f
-            val w = (page.width * scale).toInt()
-            val h = (page.height * scale).toInt()
-            
-            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
-            bitmap.eraseColor(android.graphics.Color.WHITE)
-            val matrix = Matrix().apply { postScale(scale, scale) }
-            page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-            page.close()
-            
-            file.outputStream().use { out ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
-            }
-            bitmap.recycle()
-            extractedFiles[pageIndex] = file
-            android.util.Log.d("ArchiveLoader", "PDF Pre-rendered page $pageIndex to cache.")
-        } catch (e: Exception) {
-            android.util.Log.e("ArchiveLoader", "PDF Pre-render failed: ${e.message}")
-        }
-    }
-
     // 已迁移至 xyz.sakulik.comic.model.processor.ImageEnhanceEngine
-
-    private fun openPdfSync() {
-        if (pdfRenderer != null) return
-        try {
-            pdfPfd?.close()
-            val pfd = context.contentResolver.openFileDescriptor(uri, "r")
-            pdfPfd = pfd
-            pdfPfd?.let { pdfRenderer = PdfRenderer(it) }
-        } catch (e: Exception) {
-            android.util.Log.e("ArchiveLoader", "Failed to open PDF: ${e.message}")
-            pdfPfd?.close()
-            pdfPfd = null
-            pdfRenderer = null
-        }
-    }
+    // PDF 专有逻辑已摘除至 LocalPdfPageLoader
 
     private fun decodeImageFile(file: File, reqWidth: Int, reqHeight: Int): Bitmap? {
         val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -901,8 +809,6 @@ class LocalArchivePageLoader(
         sessionScope.cancel()
         closeActiveSession()
         try {
-            pdfRenderer?.close()
-            pdfPfd?.close()
             if (sessionDir.exists()) sessionDir.deleteRecursively()
             if (uri.scheme != "file") sessionMirror?.delete()
             extractedFiles.clear()

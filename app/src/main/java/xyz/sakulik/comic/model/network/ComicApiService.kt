@@ -29,12 +29,29 @@ data class CloudComicItem(
     val originalName: String,
     val coverUrl: String,
     val isReady: Boolean,
-    val totalPages: Int
+    val totalPages: Int,
+    
+    // [元数据升维 2.0]
+    val summary: String? = null,
+    val authors: String? = null,
+    val rating: Float? = null,
+    val genres: String? = null,
+    val publisher: String? = null,
+    val year: String? = null,
+    val isCompleted: Boolean? = null
 )
 
 data class ComicDetailResponse(
     val id: String,
     val title: String,
     val totalPages: Int,
-    val coverUrl: String
+    val coverUrl: String,
+    
+    // [元数据升维 2.0]
+    val summary: String? = null,
+    val authors: String? = null,
+    val rating: Float? = null,
+    val genres: String? = null,
+    val publisher: String? = null,
+    val year: String? = null
 )

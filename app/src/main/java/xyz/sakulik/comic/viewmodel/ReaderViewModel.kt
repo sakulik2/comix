@@ -17,6 +17,7 @@ import xyz.sakulik.comic.model.db.ComicEntity
 import xyz.sakulik.comic.model.loader.ComicPageLoader
 import xyz.sakulik.comic.model.loader.ComicPageLoaderFactory
 import xyz.sakulik.comic.model.loader.LocalArchivePageLoader
+import xyz.sakulik.comic.model.loader.LocalPdfPageLoader
 import xyz.sakulik.comic.model.loader.RemoteStreamPageLoader
 import xyz.sakulik.comic.navigation.ReaderRoute
 import java.io.File
@@ -76,6 +77,7 @@ class ReaderViewModel(
         _isSharpenEnabled.value = !_isSharpenEnabled.value 
         val enabled = _isSharpenEnabled.value
         (pageLoader as? LocalArchivePageLoader)?.setSharpenEnabled(enabled)
+        (pageLoader as? LocalPdfPageLoader)?.setSharpenEnabled(enabled)
         (pageLoader as? RemoteStreamPageLoader)?.setSharpenEnabled(enabled)
         prefs.edit().putBoolean("sharpen_$cid", enabled).apply()
     }
@@ -145,6 +147,9 @@ class ReaderViewModel(
                 
                 // 使用工厂创建对应的加载引擎
                 val loader = loaderFactory.create(entity)
+                (loader as? LocalArchivePageLoader)?.setSharpenEnabled(_isSharpenEnabled.value)
+                (loader as? LocalPdfPageLoader)?.setSharpenEnabled(_isSharpenEnabled.value)
+                (loader as? RemoteStreamPageLoader)?.setSharpenEnabled(_isSharpenEnabled.value)
                 pageLoader = loader
                 
                 val pageCount = loader.getPageCount()

@@ -13,15 +13,19 @@ import java.util.concurrent.TimeUnit
 object RetrofitClient {
 
     // 由外部（ViewModel）通过 collect DataStore 后注入，拦截器直接读取，无需 runBlocking
-    @Volatile var cachedApiKey: String? = null
+    @Volatile var cachedComicVineKey: String? = null
+        private set
+
+    @Volatile var cachedComixToken: String? = null
         private set
 
     @Volatile private var okHttpClient: OkHttpClient? = null
 
-    /** 当 API Key 更新时调用，同时使现有客户端失效以便下次重建 */
-    fun updateApiKey(key: String?) {
-        if (cachedApiKey != key) {
-            cachedApiKey = key
+    /** 当任何一个 API 密钥更新时调用，同时使现有客户端失效以便下次重建 */
+    fun updateTokens(comicVineKey: String?, comixToken: String?) {
+        if (cachedComicVineKey != comicVineKey || cachedComixToken != comixToken) {
+            cachedComicVineKey = comicVineKey
+            cachedComixToken = comixToken
             okHttpClient = null
         }
     }
@@ -38,7 +42,10 @@ object RetrofitClient {
             else
                 HttpLoggingInterceptor.Level.NONE
         }
-        val headerInterceptor = HeaderInterceptor { cachedApiKey }
+        val headerInterceptor = HeaderInterceptor(
+            comicVineKeyProvider = { cachedComicVineKey },
+            comixTokenProvider = { cachedComixToken }
+        )
         return OkHttpClient.Builder()
             .addInterceptor(logging)
             .addInterceptor(headerInterceptor)
