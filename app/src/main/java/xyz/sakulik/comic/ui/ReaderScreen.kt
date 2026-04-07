@@ -45,7 +45,6 @@ fun ReaderScreen(
     comicTitle: String,
     initialPage: Int,
     isRtl: Boolean,
-    isImmersive: Boolean,
     onPageChanged: (Int) -> Unit,
     onBack: () -> Unit,
     onScrapeClick: () -> Unit,
@@ -54,14 +53,22 @@ fun ReaderScreen(
     onToggleReaderMode: () -> Unit,
     onToggleImmersive: (Boolean) -> Unit,
     onSetAsCover: (Int) -> Unit,
+    onToggleVolumeKey: () -> Unit,
     modifier: Modifier = Modifier,
+    isImmersive: Boolean = false,
     isSharpenEnabled: Boolean = false,
+    isVolumeKeyEnabled: Boolean = false,
 ) {
     val context = LocalContext.current
     val window = (context as? Activity)?.window
     val coroutineScope = rememberCoroutineScope()
 
-    // 设置屏幕常亮，防止阅读时自动关闭屏幕
+    // 状态定义（移至函数头部以防提前引用报错）
+    var isUserInteractionBlocked by remember { mutableStateOf(false) }
+    var webtoonScrollTarget by remember { mutableStateOf<Int?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // 设置屏幕常亮
     DisposableEffect(Unit) {
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
@@ -108,36 +115,66 @@ fun ReaderScreen(
         )
     } else null
 
+    // 历史跳转标志位：防止 Pager 初始化的 0 索引恶意覆盖断存进度
+    var isPagerInitialized by remember { mutableStateOf(false) }
+    // 进度条锁定标志位：用户手动拖拽期间禁止后台进度回流，防止进度条“拉不动”或“回弹”
+    var isSeeking by remember { mutableStateOf(false) }
+
     // 初始化跳转到断存点所在的 Block
     if (pagerState != null) {
         LaunchedEffect(isLayoutReady) {
             if (isLayoutReady) {
                 val targetBlock = layoutManager.getBlockIndexForPage(savedPage.intValue)
                 pagerState.scrollToPage(targetBlock)
+                isPagerInitialized = true
             }
         }
+    }
 
-        // 同步 Pager 进度到断存点与外部
-        LaunchedEffect(pagerState.currentPage, isLayoutReady, effectiveReaderMode) {
-            if (!isLayoutReady) return@LaunchedEffect
-            val targetPage = layoutManager.getFirstPageForBlock(pagerState.currentPage)
+    // 监听全局音量键分发的翻页动作
+    if (isVolumeKeyEnabled) {
+        LaunchedEffect(pagerState, webtoonScrollTarget, effectiveReaderMode) {
+            xyz.sakulik.comic.utils.VolumeKeyHandler.actions.collect { action ->
+                coroutineScope.launch {
+                    val isNext = action == xyz.sakulik.comic.utils.VolumeKeyHandler.PageAction.NEXT
+                    if (effectiveReaderMode == ReaderMode.WEBTOON) {
+                        val target = if (isNext) (savedPage.intValue + 1) else (savedPage.intValue - 1)
+                        if (target in 0 until pageCount) {
+                            webtoonScrollTarget = target
+                        }
+                    } else if (pagerState != null) {
+                        val targetPage = if (isNext) (pagerState.currentPage + 1) else (pagerState.currentPage - 1)
+                        if (targetPage in 0 until pagerState.pageCount) {
+                            pagerState.animateScrollToPage(targetPage)
+                        }
+                    }
+                }
+            }
+        }
+    }
 
-            if (savedPage.intValue != targetPage) {
-                savedPage.intValue = targetPage
-                onPageChanged(targetPage)
+    // 同步 Pager 翻页进度到断存点与数据库 (修复历史记录/进度保存失效)
+    if (pagerState != null) {
+        LaunchedEffect(pagerState.currentPage, isPagerInitialized, isSeeking) {
+            // 核心修复：1. 只有初始化跳转完成后才允许回流； 2. 用户正在手动拖拽进度条期间禁止回流覆盖
+            if (!isPagerInitialized || isSeeking) return@LaunchedEffect
+            
+            val block = layoutManager.getBlocks().getOrNull(pagerState.currentPage)
+            val page = when (block) {
+                is RenderBlock.Single -> block.pageIndex
+                is RenderBlock.Pair -> if (isRtl) block.rightIndex else block.leftIndex
+                null -> null
+            }
+            if (page != null && page != savedPage.intValue) {
+                savedPage.intValue = page
+                onPageChanged(page)
             }
         }
     }
 
     // 如果为 ture 说明内部 ZoomImage 被拉大了，拦截翻页
-    var isUserInteractionBlocked by remember { mutableStateOf(false) }
-
-    // Webtoon 模式下由进度条/跳页对话框触发的滚动目标
-    var webtoonScrollTarget by remember { mutableStateOf<Int?>(null) }
 
     val layoutDirection = if (isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
-
-    val snackbarHostState = remember { SnackbarHostState() }
 
     Box(modifier = modifier
         .fillMaxSize()
@@ -153,8 +190,10 @@ fun ReaderScreen(
                 pageCount = pageCount,
                 initialPage = savedPage.intValue,
                 onPageChanged = { page ->
-                    savedPage.intValue = page
-                    onPageChanged(page)
+                    if (!isSeeking) {
+                        savedPage.intValue = page
+                        onPageChanged(page)
+                    }
                 },
                 onTap = { onToggleImmersive(!isImmersive) },
                 scrollToPage = webtoonScrollTarget
@@ -175,37 +214,35 @@ fun ReaderScreen(
                         onScaleChanged = { isUserInteractionBlocked = it > 1.05f },
                         onTap = { onToggleImmersive(!isImmersive) }
                     ) {
-                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                            when (block) {
-                                is RenderBlock.Single -> {
-                                    ComicPageItem(
-                                        loader = loader,
-                                        pageIndex = block.pageIndex,
-                                        onScaleChanged = {}, // 缩放由外层 Box 接管
-                                        onTap = {},
-                                        enableZoom = false // 禁用单页内部缩放
-                                    )
-                                }
-                                is RenderBlock.Pair -> {
-                                    Row(modifier = Modifier.fillMaxSize()) {
-                                        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                                            ComicPageItem(
-                                                loader = loader,
-                                                pageIndex = block.leftIndex,
-                                                onScaleChanged = {},
-                                                onTap = {},
-                                                enableZoom = false
-                                            )
-                                        }
-                                        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                                            ComicPageItem(
-                                                loader = loader,
-                                                pageIndex = block.rightIndex,
-                                                onScaleChanged = {},
-                                                onTap = {},
-                                                enableZoom = false
-                                            )
-                                        }
+                        when (block) {
+                            is RenderBlock.Single -> {
+                                ComicPageItem(
+                                    loader = loader,
+                                    pageIndex = block.pageIndex,
+                                    onScaleChanged = {}, // 缩放由外层 Box 接管
+                                    onTap = {},
+                                    enableZoom = false // 禁用单页内部缩放
+                                )
+                            }
+                            is RenderBlock.Pair -> {
+                                Row(modifier = Modifier.fillMaxSize()) {
+                                    Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                        ComicPageItem(
+                                            loader = loader,
+                                            pageIndex = block.leftIndex,
+                                            onScaleChanged = {},
+                                            onTap = {},
+                                            enableZoom = false
+                                        )
+                                    }
+                                    Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                        ComicPageItem(
+                                            loader = loader,
+                                            pageIndex = block.rightIndex,
+                                            onScaleChanged = {},
+                                            onTap = {},
+                                            enableZoom = false
+                                        )
                                     }
                                 }
                             }
@@ -244,7 +281,9 @@ fun ReaderScreen(
                         }
                         DropdownMenu(
                             expanded = showMenu,
-                            onDismissRequest = { showMenu = false }
+                            onDismissRequest = { showMenu = false },
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+                            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
                         ) {
                             DropdownMenuItem(
                                 text = { Text("设为封面") },
@@ -284,6 +323,17 @@ fun ReaderScreen(
                                     )
                                 },
                                 onClick = { onToggleRtl() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("音量键翻页") },
+                                trailingIcon = {
+                                    Switch(
+                                        checked = isVolumeKeyEnabled,
+                                        onCheckedChange = { onToggleVolumeKey() },
+                                        modifier = Modifier.scale(0.8f)
+                                    )
+                                },
+                                onClick = { onToggleVolumeKey() }
                             )
                         }
                     }
@@ -377,14 +427,22 @@ fun ReaderScreen(
                     Slider(
                         value = savedPage.intValue.toFloat(),
                         onValueChange = {
+                            isSeeking = true
                             savedPage.intValue = it.toInt()
                         },
                         onValueChangeFinished = {
                             if (effectiveReaderMode == ReaderMode.WEBTOON) {
                                 webtoonScrollTarget = savedPage.intValue
+                                isSeeking = false
                             } else {
                                 val blockIndex = layoutManager.getBlockIndexForPage(savedPage.intValue)
-                                pagerState?.let { coroutineScope.launch { it.animateScrollToPage(blockIndex) } }
+                                pagerState?.let { 
+                                    coroutineScope.launch { 
+                                        it.scrollToPage(blockIndex)
+                                        kotlinx.coroutines.delay(100) // 等待跳转渲染稳定
+                                        isSeeking = false
+                                    } 
+                                }
                             }
                         },
                         valueRange = 0f..(pageCount - 1).coerceAtLeast(1).toFloat(),

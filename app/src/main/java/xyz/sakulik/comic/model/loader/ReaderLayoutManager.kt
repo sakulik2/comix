@@ -136,6 +136,6 @@ class ReaderLayoutManager(
     }
 
     private data class PageSize(val width: Int, val height: Int) {
-        fun isLandscape(): Boolean = width > height * 1.2f
+        fun isLandscape(): Boolean = width > height * 1.1f
     }
 }

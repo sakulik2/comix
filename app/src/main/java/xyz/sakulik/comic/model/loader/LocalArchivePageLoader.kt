@@ -1207,8 +1207,8 @@ class LocalArchivePageLoader(
                 }
                 
                 cdBuf.position(entryStart + 20)
-                val uncompSize = cdBuf.getInt().toLong() and 0xFFFFFFFFL
                 var compSize = cdBuf.getInt().toLong() and 0xFFFFFFFFL
+                var uncompSize = cdBuf.getInt().toLong() and 0xFFFFFFFFL
                 
                 cdBuf.position(entryStart + 28)
                 val nameLen = cdBuf.getShort().toInt() and 0xFFFF
@@ -1233,16 +1233,18 @@ class LocalArchivePageLoader(
                             // ZIP64 Extra: 根据 CD 记录中的 0xFFFFFFFF 标志来顺序读取字段
                             var posInExtra = 0
                             if (uncompSize == 0xFFFFFFFFL && posInExtra + 8 <= dataSize) {
+                                uncompSize = cdBuf.getLong(extraStart + p + 4 + posInExtra)
                                 posInExtra += 8
                             }
                             if (compSize == 0xFFFFFFFFL && posInExtra + 8 <= dataSize) {
+                                compSize = cdBuf.getLong(extraStart + p + 4 + posInExtra)
                                 posInExtra += 8
                             }
                             if (localHeaderOffset == 0xFFFFFFFFL && posInExtra + 8 <= dataSize) {
-                                cdBuf.position(extraStart + p + 4 + posInExtra)
-                                localHeaderOffset = cdBuf.getLong()
-                                android.util.Log.v("ArchiveLoader", "NIO ZIP: Found 64-bit offset for $name: $localHeaderOffset")
+                                localHeaderOffset = cdBuf.getLong(extraStart + p + 4 + posInExtra)
+                                posInExtra += 8
                             }
+                            android.util.Log.v("ArchiveLoader", "NIO ZIP: Loaded ZIP64 metadata for $name")
                             break
                         }
                         

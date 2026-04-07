@@ -65,6 +65,22 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
+        if (xyz.sakulik.comic.utils.VolumeKeyHandler.isEnabled) {
+            when (keyCode) {
+                android.view.KeyEvent.KEYCODE_VOLUME_UP -> {
+                    xyz.sakulik.comic.utils.VolumeKeyHandler.actions.tryEmit(xyz.sakulik.comic.utils.VolumeKeyHandler.PageAction.PREVIOUS)
+                    return true
+                }
+                android.view.KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                    xyz.sakulik.comic.utils.VolumeKeyHandler.actions.tryEmit(xyz.sakulik.comic.utils.VolumeKeyHandler.PageAction.NEXT)
+                    return true
+                }
+            }
+        }
+        return super.onKeyDown(keyCode, event)
+    }
 }
 
 /**
@@ -279,6 +295,7 @@ fun ComicAppNavHost() {
                     val readerMode by readerViewModel.readerMode.collectAsState()
                     val isImmersive by readerViewModel.isImmersive.collectAsState()
                     val isSharpenEnabled by readerViewModel.isSharpenEnabled.collectAsState()
+                    val isVolumeKeyEnabled by readerViewModel.isVolumeKeyEnabled.collectAsState()
 
                     xyz.sakulik.comic.ui.ReaderScreen(
                         loader = s.loader,
@@ -289,6 +306,7 @@ fun ComicAppNavHost() {
                         isRtl = isRtl,
                         isImmersive = isImmersive,
                         isSharpenEnabled = isSharpenEnabled,
+                        isVolumeKeyEnabled = isVolumeKeyEnabled,
                         onPageChanged = { page ->
                             readerViewModel.updateProgress(page, s.pageCount)
                         },
@@ -296,6 +314,7 @@ fun ComicAppNavHost() {
                         onScrapeClick = { readerViewModel.currentEntity?.id?.let { navController.navigate(MetadataSearchRoute(it)) } },
                         onToggleRtl = { readerViewModel.toggleRtl() },
                         onToggleSharpen = { readerViewModel.toggleSharpen() },
+                        onToggleVolumeKey = { readerViewModel.toggleVolumeKeyPaging() },
                         onToggleReaderMode = { readerViewModel.toggleReaderMode() },
                         onToggleImmersive = { readerViewModel.setImmersive(it) },
                         onSetAsCover = { page -> readerViewModel.setAsCover(page) }

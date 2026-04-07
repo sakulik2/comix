@@ -5,6 +5,13 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+// 手动注册 testClasses 任务桩
+// 现代 AGP 已经剥离了此任务，但部分 IDE 插件依然会调用它
+tasks.register("testClasses") {
+    group = "verification"
+    description = "Stub for missing testClasses task in modern AGP versions"
+}
+
 android {
     namespace = "xyz.sakulik.comic"
     compileSdk = 34
@@ -13,8 +20,8 @@ android {
         applicationId = "xyz.sakulik.comic"
         minSdk = 24
         targetSdk = 34
-        versionCode = 11
-        versionName = "1.6.1"
+        versionCode = 12
+        versionName = "1.6.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
         ndk {

@@ -1,6 +1,7 @@
 package xyz.sakulik.comic.viewmodel
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
@@ -53,18 +54,41 @@ class ReaderViewModel(
     private val _isSharpenEnabled = MutableStateFlow(false)
     val isSharpenEnabled: StateFlow<Boolean> = _isSharpenEnabled.asStateFlow()
 
-    fun toggleRtl() { _isRtl.value = !_isRtl.value }
-    fun toggleSharpen() { 
-        _isSharpenEnabled.value = !_isSharpenEnabled.value 
-        (pageLoader as? LocalArchivePageLoader)?.setSharpenEnabled(_isSharpenEnabled.value)
-        (pageLoader as? RemoteStreamPageLoader)?.setSharpenEnabled(_isSharpenEnabled.value)
+    private val _isVolumeKeyEnabled = MutableStateFlow(false)
+    val isVolumeKeyEnabled: StateFlow<Boolean> = _isVolumeKeyEnabled.asStateFlow()
+
+    fun toggleVolumeKeyPaging() {
+        val cid = matchedComicId
+        _isVolumeKeyEnabled.value = !_isVolumeKeyEnabled.value
+        val enabled = _isVolumeKeyEnabled.value
+        xyz.sakulik.comic.utils.VolumeKeyHandler.isEnabled = enabled
+        prefs.edit().putBoolean("vol_paging_$cid", enabled).apply()
     }
+
+    fun toggleRtl() { 
+        val cid = matchedComicId
+        _isRtl.value = !_isRtl.value 
+        prefs.edit().putBoolean("rtl_$cid", _isRtl.value).apply()
+    }
+    
+    fun toggleSharpen() { 
+        val cid = matchedComicId
+        _isSharpenEnabled.value = !_isSharpenEnabled.value 
+        val enabled = _isSharpenEnabled.value
+        (pageLoader as? LocalArchivePageLoader)?.setSharpenEnabled(enabled)
+        (pageLoader as? RemoteStreamPageLoader)?.setSharpenEnabled(enabled)
+        prefs.edit().putBoolean("sharpen_$cid", enabled).apply()
+    }
+    
     fun toggleReaderMode() {
+        val cid = matchedComicId
         _readerMode.value = when (_readerMode.value) {
             ReaderMode.PAGER -> ReaderMode.WEBTOON
             ReaderMode.WEBTOON -> ReaderMode.DUAL_PAGE
             ReaderMode.DUAL_PAGE -> ReaderMode.PAGER
         }
+        // 核心单本记忆：以漫画 ID 为唯一标识，持久化存储当前漫画的阅读布局偏好
+        prefs.edit().putInt("reader_mode_$cid", _readerMode.value.ordinal).apply()
     }
     fun setImmersive(immersive: Boolean) { _isImmersive.value = immersive }
 
@@ -79,6 +103,8 @@ class ReaderViewModel(
     private var pageLoader: ComicPageLoader? = null
     private val loaderFactory = ComicPageLoaderFactory(application)
 
+    private val prefs = application.getSharedPreferences("reader_settings", Context.MODE_PRIVATE)
+
     init {
         if (!comicCacheDir.exists()) comicCacheDir.mkdirs()
         initialLoading()
@@ -86,6 +112,21 @@ class ReaderViewModel(
 
     private fun initialLoading() {
         viewModelScope.launch {
+            // 体验优化：微延时 150ms 让位给导航转场动画，防止进入阅读器时闪烁卡顿
+            kotlinx.coroutines.delay(150)
+            
+            // 核心功能点：单本选项精准加载。所有配置项现在均以漫画 ID 为唯一枢纽进行独立存档
+            val cid = matchedComicId
+            _isRtl.value = prefs.getBoolean("rtl_$cid", false)
+            _isSharpenEnabled.value = prefs.getBoolean("sharpen_$cid", false)
+            _isVolumeKeyEnabled.value = prefs.getBoolean("vol_paging_$cid", false)
+            xyz.sakulik.comic.utils.VolumeKeyHandler.isEnabled = _isVolumeKeyEnabled.value
+            
+            val savedMode = prefs.getInt("reader_mode_$cid", -1)
+            if (savedMode != -1) {
+                _readerMode.value = ReaderMode.values()[savedMode]
+            }
+
             _state.value = ComicState.Loading
             try {
                 // 根据 ID 查询漫画实体
@@ -110,6 +151,9 @@ class ReaderViewModel(
                 if (pageCount == 0) throw IllegalStateException("无法加载漫画页面，文件可能已损坏或暂不支持该格式")
 
                 _state.value = ComicState.Ready(pageCount, entity.title, ext, uri, loader)
+                
+                // 即入置顶策略：只要成功打开漫画，就立即更新最后阅读时间
+                updateProgress(entity.currentPage, pageCount)
             } catch (e: Exception) {
                 e.printStackTrace()
                 val message = when {
@@ -124,8 +168,10 @@ class ReaderViewModel(
 
     fun updateProgress(page: Int, totalPages: Int) {
         val entity = currentEntity ?: return
-        viewModelScope.launch {
-            dao.updateProgress(entity.id, page, totalPages, System.currentTimeMillis())
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                dao.updateProgress(entity.id, page, totalPages, System.currentTimeMillis())
+            } catch (e: Exception) { e.printStackTrace() }
         }
     }
 
@@ -192,8 +238,12 @@ class ReaderViewModel(
 
     override fun onCleared() {
         super.onCleared()
-        clearCache()
-        // 关闭加载引擎并释放资源
-        pageLoader?.close()
+        // 核心性能优化：使用显式后台作用域执行 IO 清理，解决退出动画卡顿
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            clearCache()
+            pageLoader?.close()
+        }
+        // 恢复音量键状态
+        xyz.sakulik.comic.utils.VolumeKeyHandler.isEnabled = false
     }
 }
