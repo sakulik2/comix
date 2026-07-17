@@ -632,7 +632,9 @@ class LocalArchivePageLoader(
             }
             
             return if (isSharpenEnabled && bitmap != null) {
-                ImageEnhanceEngine.enhance(bitmap) { w, h, cfg -> obtainBitmap(w, h, cfg) }
+                val enhanced = ImageEnhanceEngine.enhance(bitmap) { w, h, cfg -> obtainBitmap(w, h, cfg) }
+                releaseBitmap(bitmap)
+                enhanced
             } else bitmap
         } catch (e: Exception) {
             android.util.Log.e("ArchiveLoader", "decodeImageStream encountered fatal error: ${e.message}", e)
@@ -778,12 +780,18 @@ class LocalArchivePageLoader(
             }
         }
         options.inMutable = true
-        return try {
+        val bitmap = try {
             BitmapFactory.decodeFile(file.absolutePath, options)
         } catch (e: Exception) {
             options.inBitmap = null
             BitmapFactory.decodeFile(file.absolutePath, options)
         }
+
+        return if (isSharpenEnabled && bitmap != null) {
+            val enhanced = ImageEnhanceEngine.enhance(bitmap) { w, h, cfg -> obtainBitmap(w, h, cfg) }
+            releaseBitmap(bitmap)
+            enhanced
+        } else bitmap
     }
 
     private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
@@ -948,6 +956,22 @@ class LocalArchivePageLoader(
 
     private inner class ZipFastIndexer(private val channel: FileChannel) {
         private val entries = mutableMapOf<String, ZipEntryMeta>()
+        
+        private fun decodeZipString(bytes: ByteArray): String {
+            return try {
+                val decoder = java.nio.charset.StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                decoder.decode(ByteBuffer.wrap(bytes)).toString()
+            } catch (e: Exception) {
+                try {
+                    String(bytes, java.nio.charset.Charset.forName("GBK"))
+                } catch (ex: Exception) {
+                    String(bytes, java.nio.charset.Charset.defaultCharset())
+                }
+            }
+        }
+
         init { parseCentralDirectory() }
         fun getEntryNames(): List<String> = entries.keys.toList()
         fun getEntryInputStream(name: String): java.io.InputStream? {
@@ -1125,7 +1149,7 @@ class LocalArchivePageLoader(
                 
                 val nameBytes = ByteArray(nameLen)
                 cdBuf.get(nameBytes)
-                val name = String(nameBytes, kotlin.text.Charsets.UTF_8)
+                val name = decodeZipString(nameBytes)
                 
                 if (extraLen > 0) {
                     val extraStart = cdBuf.position()

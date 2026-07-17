@@ -41,6 +41,81 @@ class LocalPdfPageLoader(
     private var isSharpenEnabled = false
     fun setSharpenEnabled(enabled: Boolean) { isSharpenEnabled = enabled }
 
+    // Bitmap 复用池，减少 PDF 渲染与解码的内存分配与 GC 抖动
+    private val bitmapPool = java.util.Collections.synchronizedList(mutableListOf<Bitmap>())
+
+    private fun obtainBitmap(w: Int, h: Int, config: Bitmap.Config): Bitmap {
+        val requiredBytes = w * h * (if (config == Bitmap.Config.RGB_565) 2 else 4)
+        synchronized(bitmapPool) {
+            val it = bitmapPool.iterator()
+            while (it.hasNext()) {
+                val b = it.next()
+                if (!b.isRecycled && b.isMutable && b.allocationByteCount >= requiredBytes) {
+                    it.remove()
+                    b.reconfigure(w, h, config)
+                    b.eraseColor(android.graphics.Color.TRANSPARENT)
+                    return b
+                }
+            }
+        }
+        return Bitmap.createBitmap(w, h, config)
+    }
+
+    private fun releaseBitmap(bitmap: Bitmap?) {
+        if (bitmap == null || bitmap.isRecycled) return
+        synchronized(bitmapPool) {
+            if (bitmapPool.size < 12) {
+                bitmapPool.add(bitmap)
+            } else {
+                bitmap.recycle()
+            }
+        }
+    }
+
+    private fun decodeImageFile(file: File, reqWidth: Int, reqHeight: Int): Bitmap? {
+        val options = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+        val sampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
+        options.inSampleSize = sampleSize
+        options.inJustDecodeBounds = false
+        options.inPreferredConfig = Bitmap.Config.ARGB_8888
+        val targetW = options.outWidth / sampleSize
+        val targetH = options.outHeight / sampleSize
+        
+        val requiredBytes = targetW * targetH * 4
+        synchronized(bitmapPool) {
+            val it = bitmapPool.iterator()
+            while (it.hasNext()) {
+                val b = it.next()
+                if (!b.isRecycled && b.isMutable && b.allocationByteCount >= requiredBytes) {
+                    options.inBitmap = b
+                    it.remove()
+                    break
+                }
+            }
+        }
+        options.inMutable = true
+        return try {
+            android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+        } catch (e: Exception) {
+            options.inBitmap = null
+            android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+        }
+    }
+
+    private fun calculateInSampleSize(options: android.graphics.BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+        val (height: Int, width: Int) = options.outHeight to options.outWidth
+        var inSampleSize = 1
+        if (height > reqHeight || width > reqWidth) {
+            val halfHeight: Int = height / 2
+            val halfWidth: Int = width / 2
+            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                inSampleSize *= 2
+            }
+        }
+        return inSampleSize
+    }
+
     private suspend fun ensureRenderer(): PdfRenderer? = pdfMutex.withLock {
         if (renderer != null) return renderer
         try {
@@ -75,7 +150,7 @@ class LocalPdfPageLoader(
         // [路径 A] 磁盘预渲染缓存优先
         preRenderedFiles[pageIndex]?.let { file ->
             if (file.exists()) {
-                val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+                val bitmap = decodeImageFile(file, width, height)
                 if (bitmap != null) return@withContext processEnhancement(bitmap)
             }
         }
@@ -95,8 +170,8 @@ class LocalPdfPageLoader(
                 val targetW = (page.width * scale).toInt().coerceAtLeast(1)
                 val targetH = (page.height * scale).toInt().coerceAtLeast(1)
                 
-                // 采用最高画质配置
-                val bitmap = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+                // 采用最高画质配置，从复用池获取 Bitmap
+                val bitmap = obtainBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
                 bitmap.eraseColor(android.graphics.Color.WHITE)
                 
                 val matrix = Matrix().apply { postScale(scale, scale) }
@@ -114,15 +189,18 @@ class LocalPdfPageLoader(
 
     private fun processEnhancement(bitmap: Bitmap): Bitmap {
         return if (isSharpenEnabled) {
-            ImageEnhanceEngine.enhance(bitmap) { w, h, cfg -> 
-                Bitmap.createBitmap(w, h, cfg) 
+            val enhanced = ImageEnhanceEngine.enhance(bitmap) { w, h, cfg -> 
+                obtainBitmap(w, h, cfg) 
             }
+            // 释放不再需要的原始位图
+            releaseBitmap(bitmap)
+            enhanced
         } else bitmap
     }
 
     override fun releasePageData(data: Any?) {
-        if (data is Bitmap && !data.isRecycled) {
-            data.recycle()
+        if (data is Bitmap) {
+            releaseBitmap(data)
         }
     }
 
@@ -133,6 +211,11 @@ class LocalPdfPageLoader(
             if (sessionDir.exists()) sessionDir.deleteRecursively()
             preRenderedFiles.clear()
             dimensionsCache.clear()
+            synchronized(bitmapPool) {
+                bitmapPool.forEach { it.recycle() }
+                bitmapPool.clear()
+            }
         } catch (e: Exception) { /* ignore */ }
     }
+}
 }
