@@ -29,10 +29,17 @@ class HeaderInterceptor(
                 builder.url(newUrl)
             }
         } else {
-            // 对于我们的自建 Comix Server，通过 HTTP Header 注入 Token
             val token = comixTokenProvider()
-            if (!token.isNullOrEmpty()) {
-                builder.header("x-comix-token", token)
+            val path = httpUrl.encodedPath
+            // 侦测请求是否属于 Comix 协议（路径中包含 /api/comics 或 /api/scan）
+            val isComix = path.contains("/api/comics") || path.contains("/api/scan")
+
+            if (isComix) {
+                if (!token.isNullOrEmpty()) {
+                    builder.header("x-comix-token", token)
+                }
+                // 仅对 Comix 协议请求，覆盖并注入专属的 UA
+                builder.header("User-Agent", "comix/1.7.2 (Android; Mobile)")
             }
         }
         
