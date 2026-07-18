@@ -9,9 +9,14 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import android.util.Log
+import xyz.sakulik.comic.model.preferences.SettingsDataStore
+import xyz.sakulik.comic.model.network.RetrofitClient
+import xyz.sakulik.comic.model.network.ComicApiService
 import xyz.sakulik.comic.model.db.ComicDao
 import xyz.sakulik.comic.model.db.ComicEntity
 import xyz.sakulik.comic.model.loader.ComicPageLoader
@@ -132,10 +137,56 @@ class ReaderViewModel(
             _state.value = ComicState.Loading
             try {
                 // 根据 ID 查询漫画实体
-                val entity = dao.getComicById(matchedComicId)
+                var entity = dao.getComicById(matchedComicId)
                     ?: throw IllegalArgumentException("找不到 ID 为 [$matchedComicId] 的漫画记录")
                 
                 currentEntity = entity
+                val context = getApplication<Application>()
+
+                // 如果是远程漫画，动态与服务端同步最新的解压状态和总页数，支持自愈与轮询等待
+                if (entity.source == xyz.sakulik.comic.model.db.ComicSource.REMOTE) {
+                    val baseUrl = SettingsDataStore.getComicApiBaseUrlFlow(context).firstOrNull()
+                        ?: "https://comix.sakulik.xyz/"
+                    val apiService = RetrofitClient.createService(
+                        context = context,
+                        baseUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/",
+                        serviceClass = ComicApiService::class.java
+                    )
+                    
+                    var isReady = false
+                    var remotePages = 0
+                    var retryCount = 0
+                    
+                    // 循环检测服务器是否解压完成，最多尝试 15 次（每次间隔 2 秒，共 30 秒）
+                    while (!isReady && retryCount < 15) {
+                        try {
+                            val detail = apiService.getComicDetail(entity.location)
+                            isReady = detail.isReady
+                            remotePages = detail.totalPages
+                            if (!isReady) {
+                                _state.value = ComicState.Loading // 保持加载状态
+                                Log.d("ReaderViewModel", "云端正在解压中，第 ${retryCount + 1} 次轮询重试...")
+                                kotlinx.coroutines.delay(2000)
+                                retryCount++
+                            }
+                        } catch (e: Exception) {
+                            Log.e("ReaderViewModel", "云端详情请求异常:", e)
+                            kotlinx.coroutines.delay(2000)
+                            retryCount++
+                        }
+                    }
+
+                    if (isReady && remotePages > 0) {
+                        // 仅当就绪且页数大于 0 时，同步更新本地数据库的总页数与缓存状态
+                        val updatedEntity = entity.copy(totalPages = remotePages)
+                        dao.update(updatedEntity)
+                        entity = updatedEntity // 替换为最新实体以供后续 loader 创建使用
+                        currentEntity = updatedEntity
+                    } else {
+                        throw IllegalStateException("云端漫画尚未准备就绪，请稍后重试（当前解压任务可能仍在后台排队）")
+                    }
+                }
+
                 val uri = Uri.parse(entity.uri)
                 // 优先使用数据库中存储的扩展名，如果为空则尝试从路径解析
                 val ext = entity.extension.ifBlank {
@@ -143,7 +194,6 @@ class ReaderViewModel(
                 }
 
                 clearCache()
-                val context = getApplication<Application>()
                 
                 // 使用工厂创建对应的加载引擎
                 val loader = loaderFactory.create(entity)

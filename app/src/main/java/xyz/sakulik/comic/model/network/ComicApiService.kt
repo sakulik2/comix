@@ -46,6 +46,8 @@ data class ComicDetailResponse(
     val title: String,
     val totalPages: Int,
     val coverUrl: String,
+    val isReady: Boolean = false,
+    val status: String = "processing",
     
     // [元数据升维 2.0]
     val summary: String? = null,
