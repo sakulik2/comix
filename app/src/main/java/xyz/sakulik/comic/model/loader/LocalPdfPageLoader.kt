@@ -218,4 +218,3 @@ class LocalPdfPageLoader(
         } catch (e: Exception) { /* ignore */ }
     }
 }
-}
