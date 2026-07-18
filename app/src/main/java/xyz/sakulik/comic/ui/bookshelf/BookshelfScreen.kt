@@ -61,6 +61,8 @@ fun BookshelfScreen(
     val selectedRegion by viewModel.selectedRegionFilter.collectAsState()
     val autoScrapeState by viewModel.autoScrapeState.collectAsState()
     val remoteEnabled by viewModel.remoteEnabled.collectAsState()
+    val comixBaseUrl by viewModel.comixBaseUrl.collectAsState()
+    val comixToken by viewModel.comixToken.collectAsState()
     val collections by viewModel.collections.collectAsState()
 
     var showSortMenu by remember { mutableStateOf(false) }
@@ -493,8 +495,8 @@ fun BookshelfScreen(
     }
 
     if (showApiDialog) {
-        var inputUrl by remember { mutableStateOf("https://comix.sakulik.xyz/") }
-        var inputToken by remember { mutableStateOf("") }
+        var inputUrl by remember(comixBaseUrl) { mutableStateOf(comixBaseUrl ?: "https://comix.sakulik.xyz/") }
+        var inputToken by remember(comixToken) { mutableStateOf(comixToken ?: "") }
         
         AlertDialog(
             onDismissRequest = { showApiDialog = false },

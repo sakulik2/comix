@@ -67,6 +67,7 @@ fun ReaderScreen(
     var isUserInteractionBlocked by remember { mutableStateOf(false) }
     var webtoonScrollTarget by remember { mutableStateOf<Int?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
+    var reloadKey by remember { mutableIntStateOf(0) }
 
     // 设置屏幕常亮
     DisposableEffect(Unit) {
@@ -78,6 +79,7 @@ fun ReaderScreen(
 
     val config = androidx.compose.ui.platform.LocalConfiguration.current
     val isLandscape = config.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val isRemote = loader is xyz.sakulik.comic.model.loader.RemoteStreamPageLoader
 
     // 横屏模式下，如果当前是翻页模式，默认采用双页逻辑以利用屏幕宽度
     // 为了不干扰用户手动选择，这里仅作逻辑映射建议
@@ -185,19 +187,21 @@ fun ReaderScreen(
                 CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
             }
         } else if (readerMode == ReaderMode.WEBTOON) {
-            WebtoonReader(
-                loader = loader,
-                pageCount = pageCount,
-                initialPage = savedPage.intValue,
-                onPageChanged = { page ->
-                    if (!isSeeking) {
-                        savedPage.intValue = page
-                        onPageChanged(page)
-                    }
-                },
-                onTap = { onToggleImmersive(!isImmersive) },
-                scrollToPage = webtoonScrollTarget
-            )
+            key(reloadKey) {
+                WebtoonReader(
+                    loader = loader,
+                    pageCount = pageCount,
+                    initialPage = savedPage.intValue,
+                    onPageChanged = { page ->
+                        if (!isSeeking) {
+                            savedPage.intValue = page
+                            onPageChanged(page)
+                        }
+                    },
+                    onTap = { onToggleImmersive(!isImmersive) },
+                    scrollToPage = webtoonScrollTarget
+                )
+            }
         } else {
             CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
                 HorizontalPager(
@@ -214,35 +218,37 @@ fun ReaderScreen(
                         onScaleChanged = { isUserInteractionBlocked = it > 1.05f },
                         onTap = { onToggleImmersive(!isImmersive) }
                     ) {
-                        when (block) {
-                            is RenderBlock.Single -> {
-                                ComicPageItem(
-                                    loader = loader,
-                                    pageIndex = block.pageIndex,
-                                    onScaleChanged = {}, // 缩放由外层 Box 接管
-                                    onTap = {},
-                                    enableZoom = false // 禁用单页内部缩放
-                                )
-                            }
-                            is RenderBlock.Pair -> {
-                                Row(modifier = Modifier.fillMaxSize()) {
-                                    Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                                        ComicPageItem(
-                                            loader = loader,
-                                            pageIndex = block.leftIndex,
-                                            onScaleChanged = {},
-                                            onTap = {},
-                                            enableZoom = false
-                                        )
-                                    }
-                                    Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                                        ComicPageItem(
-                                            loader = loader,
-                                            pageIndex = block.rightIndex,
-                                            onScaleChanged = {},
-                                            onTap = {},
-                                            enableZoom = false
-                                        )
+                        key(reloadKey) {
+                            when (block) {
+                                is RenderBlock.Single -> {
+                                    ComicPageItem(
+                                        loader = loader,
+                                        pageIndex = block.pageIndex,
+                                        onScaleChanged = {}, // 缩放由外层 Box 接管
+                                        onTap = {},
+                                        enableZoom = false // 禁用单页内部缩放
+                                    )
+                                }
+                                is RenderBlock.Pair -> {
+                                    Row(modifier = Modifier.fillMaxSize()) {
+                                        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                            ComicPageItem(
+                                                loader = loader,
+                                                pageIndex = block.leftIndex,
+                                                onScaleChanged = {},
+                                                onTap = {},
+                                                enableZoom = false
+                                            )
+                                        }
+                                        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                            ComicPageItem(
+                                                loader = loader,
+                                                pageIndex = block.rightIndex,
+                                                onScaleChanged = {},
+                                                onTap = {},
+                                                enableZoom = false
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -285,6 +291,22 @@ fun ReaderScreen(
                             shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
                             containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
                         ) {
+                            if (isRemote) {
+                                DropdownMenuItem(
+                                    text = { Text("重新加载当前页") },
+                                    leadingIcon = { Icon(Icons.Default.Refresh, null) },
+                                    onClick = {
+                                        showMenu = false
+                                        coroutineScope.launch {
+                                            val currentPage = savedPage.intValue
+                                            (loader as? xyz.sakulik.comic.model.loader.RemoteStreamPageLoader)?.evictPageCache(currentPage)
+                                            reloadKey++
+                                            snackbarHostState.showSnackbar("正在重新加载当前页面...")
+                                        }
+                                    }
+                                )
+                                HorizontalDivider()
+                            }
                             DropdownMenuItem(
                                 text = { Text("设为封面") },
                                 leadingIcon = { Icon(Icons.Default.PhotoCamera, null) },

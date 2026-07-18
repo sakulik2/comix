@@ -103,7 +103,7 @@ class RemoteStreamPageLoader(
             // 微延迟防止在进度条滑动时产生短时间的网络请求冲击
             kotlinx.coroutines.delay(400)
             val start = (currentIndex + 1).coerceAtMost(totalPages - 1)
-            val end = (currentIndex + 5).coerceAtMost(totalPages - 1)
+            val end = (currentIndex + 10).coerceAtMost(totalPages - 1)
             
             for (idx in start..end) {
                 ensureActive()
@@ -125,6 +125,18 @@ class RemoteStreamPageLoader(
     override fun releasePageData(data: Any?) {
         if (data is Bitmap && !data.isRecycled) {
             data.recycle()
+        }
+    }
+
+    fun evictPageCache(pageIndex: Int) {
+        try {
+            val file = File(cacheDir, "p$pageIndex.webp")
+            if (file.exists()) {
+                file.delete()
+            }
+            dimensionsCache.remove(pageIndex)
+        } catch (e: Exception) {
+            android.util.Log.e("RemoteLoader", "Evict cache failed: ${e.message}")
         }
     }
 

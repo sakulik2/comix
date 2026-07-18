@@ -113,6 +113,14 @@ class BookshelfViewModel(
     val metadataEnabled = SettingsDataStore.getMetadataEnabledFlow(application)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
+    // 远程服务器配置地址
+    val comixBaseUrl = SettingsDataStore.getComicApiBaseUrlFlow(application)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "https://comix.sakulik.xyz/")
+
+    // 远程服务器 Token
+    val comixToken = SettingsDataStore.getComicApiTokenFlow(application)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
+
     // ======= 核心重构：打通 WorkManager 返回的数据管道 =======
     val scanProgress: StateFlow<String?> = WorkManager.getInstance(application)
         .getWorkInfosByTagFlow("SCAN_LIBRARY_WORK")
