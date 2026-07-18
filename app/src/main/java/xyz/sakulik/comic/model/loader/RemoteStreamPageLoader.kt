@@ -21,7 +21,7 @@ class RemoteStreamPageLoader(
     private val baseUrl: String
 ) : ComicPageLoader {
 
-    private val client = OkHttpClient()
+    private val client = xyz.sakulik.comic.model.network.RetrofitClient.getClient(context)
     private val cacheDir = File(context.cacheDir, "remote_l2/$comicId").apply { if (!exists()) mkdirs() }
     private val dimensionsCache = ConcurrentHashMap<Int, Pair<Int, Int>>()
     private val sessionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -72,20 +72,27 @@ class RemoteStreamPageLoader(
 
     private fun downloadPageSync(pageIndex: Int, targetFile: File) {
         val normalizedBaseUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
-        val url = "${normalizedBaseUrl}api/comics/$comicId/page/$pageIndex"
+        val pageNumber = pageIndex + 1
+        val url = "${normalizedBaseUrl}api/comics/$comicId/page/$pageNumber"
         
+        val tmpFile = File(targetFile.absolutePath + ".tmp")
         try {
             val request = Request.Builder().url(url).build()
             client.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val responseBody = response.body ?: return
-                    targetFile.outputStream().use { out ->
+                    tmpFile.outputStream().use { out ->
                         responseBody.byteStream().copyTo(out)
+                    }
+                    if (!tmpFile.renameTo(targetFile)) {
+                        tmpFile.delete()
                     }
                 }
             }
         } catch (e: Exception) {
             android.util.Log.e("RemoteLoader", "Download failed for index $pageIndex: ${e.message}")
+            if (tmpFile.exists()) tmpFile.delete()
+            if (targetFile.exists()) targetFile.delete()
         }
     }
 

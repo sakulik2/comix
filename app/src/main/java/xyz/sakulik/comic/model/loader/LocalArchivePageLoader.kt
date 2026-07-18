@@ -734,8 +734,19 @@ class LocalArchivePageLoader(
 
     private fun saveEntryToCache(input: java.io.InputStream, index: Int) {
         val file = File(sessionDir, "p_$index.tmp")
-        file.outputStream().use { out -> input.copyTo(out) }
-        extractedFiles[index] = file
+        val partFile = File(sessionDir, "p_$index.part")
+        try {
+            partFile.outputStream().use { out -> input.copyTo(out) }
+            if (partFile.renameTo(file)) {
+                extractedFiles[index] = file
+            } else {
+                partFile.delete()
+            }
+        } catch (e: Exception) {
+            if (partFile.exists()) partFile.delete()
+            if (file.exists()) file.delete()
+            throw e
+        }
     }
 
     private var slidingWindowJob: kotlinx.coroutines.Job? = null
