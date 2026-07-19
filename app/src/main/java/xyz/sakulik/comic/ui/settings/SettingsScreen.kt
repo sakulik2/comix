@@ -27,8 +27,8 @@ fun SettingsScreen(
     val savedApiKey by SettingsDataStore.getComicVineApiKeyFlow(context).collectAsState(initial = "")
     var apiKeyInput by remember(savedApiKey) { mutableStateOf(savedApiKey ?: "") }
 
-    val savedApiUrl by SettingsDataStore.getComicApiBaseUrlFlow(context).collectAsState(initial = "https://comix.sakulik.xyz/")
-    var apiUrlInput by remember(savedApiUrl) { mutableStateOf(savedApiUrl ?: "https://comix.sakulik.xyz/") }
+    val savedApiUrl by SettingsDataStore.getComicApiBaseUrlFlow(context).collectAsState(initial = "")
+    var apiUrlInput by remember(savedApiUrl) { mutableStateOf(savedApiUrl ?: "") }
 
     val savedApiToken by SettingsDataStore.getComicApiTokenFlow(context).collectAsState(initial = "")
     var apiTokenInput by remember(savedApiToken) { mutableStateOf(savedApiToken ?: "") }
@@ -100,7 +100,7 @@ fun SettingsScreen(
                                 value = apiUrlInput,
                                 onValueChange = { apiUrlInput = it },
                                 label = { Text("Comix API Base URL") },
-                                placeholder = { Text("https://comix.sakulik.xyz/") },
+                                placeholder = { Text("http://192.168.1.3:3000/") },
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true
                             )

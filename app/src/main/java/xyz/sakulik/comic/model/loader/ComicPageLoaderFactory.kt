@@ -22,7 +22,9 @@ class ComicPageLoaderFactory(private val context: Context) {
         
         // 从 DataStore 中获取用户配置的 API 基础地址
         val baseUrlFromSettings = SettingsDataStore.getComicApiBaseUrlFlow(context).firstOrNull()
-            ?: "https://comix.sakulik.xyz/"
+        if (baseUrlFromSettings.isNullOrBlank()) {
+            throw IllegalStateException("未配置远程服务器 API 地址")
+        }
 
         return RetrofitClient.createService(
             context = context,
@@ -47,7 +49,10 @@ class ComicPageLoaderFactory(private val context: Context) {
                 }
             }
             ComicSource.REMOTE -> {
-                val baseUrl = SettingsDataStore.getComicApiBaseUrlFlow(context).firstOrNull() ?: "https://comix.sakulik.xyz/"
+                val baseUrl = SettingsDataStore.getComicApiBaseUrlFlow(context).firstOrNull()
+                if (baseUrl.isNullOrBlank()) {
+                    throw IllegalStateException("未配置远程服务器 API 地址")
+                }
                 RemoteStreamPageLoader(
                     context = context,
                     comicId = comic.location,

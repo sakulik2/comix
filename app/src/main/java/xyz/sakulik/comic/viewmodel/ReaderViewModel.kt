@@ -146,7 +146,9 @@ class ReaderViewModel(
                 // 如果是远程漫画，动态与服务端同步最新的解压状态和总页数，支持自愈与轮询等待
                 if (entity.source == xyz.sakulik.comic.model.db.ComicSource.REMOTE) {
                     val baseUrl = SettingsDataStore.getComicApiBaseUrlFlow(context).firstOrNull()
-                        ?: "https://comix.sakulik.xyz/"
+                    if (baseUrl.isNullOrBlank()) {
+                        throw IllegalStateException("未配置远程服务器 API 地址，请在设置中配置")
+                    }
                     val apiService = RetrofitClient.createService(
                         context = context,
                         baseUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/",

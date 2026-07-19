@@ -95,6 +95,38 @@ class BookshelfViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             autoCleanRemoteCache()
         }
+        // 监控远程配置变更（Base URL 与 Token），实时/冷启动时触发连通性校验以刷新可见性状态
+        viewModelScope.launch {
+            kotlinx.coroutines.flow.combine(
+                SettingsDataStore.getComicApiBaseUrlFlow(application),
+                SettingsDataStore.getComicApiTokenFlow(application)
+            ) { url, token ->
+                url to token
+            }.collectLatest { (url, token) ->
+                if (url.isNullOrBlank()) {
+                    _isServerReachable.value = false
+                    return@collectLatest
+                }
+                withContext(Dispatchers.IO) {
+                    try {
+                        val apiService = RetrofitClient.createService(
+                            context = application,
+                            baseUrl = if (url.endsWith("/")) url else "$url/",
+                            serviceClass = ComicApiService::class.java
+                        )
+                        // 限时 3 秒请求书架，校验连通状态
+                        kotlinx.coroutines.withTimeout(3000) {
+                            apiService.getComics()
+                        }
+                        _isServerReachable.value = true
+                        Log.d("BookshelfVM", "服务器连通校验成功: $url, 远程漫画已显示。")
+                    } catch (e: Exception) {
+                        Log.e("BookshelfVM", "服务器连通校验失败: $url, 远程漫画已隐藏: ${e.message}")
+                        _isServerReachable.value = false
+                    }
+                }
+            }
+        }
     }
     
     private val _sortOrder = savedStateHandle.getStateFlow("sortOrder", SortOrder.LAST_READ)
@@ -113,13 +145,22 @@ class BookshelfViewModel(
     val remoteEnabled = SettingsDataStore.getRemoteEnabledFlow(application)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
+    // 服务器是否可达状态 (运行时检测)
+    private val _isServerReachable = MutableStateFlow(true)
+    val isServerReachable = _isServerReachable.asStateFlow()
+
+    // 决定远程漫画是否实际可见（结合设置开关与服务器连通性）
+    val remoteVisible = combine(remoteEnabled, isServerReachable) { enabled, reachable ->
+        enabled && reachable
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
     // 元数据启用状态开关
     val metadataEnabled = SettingsDataStore.getMetadataEnabledFlow(application)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
     // 远程服务器配置地址
     val comixBaseUrl = SettingsDataStore.getComicApiBaseUrlFlow(application)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "https://comix.sakulik.xyz/")
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
 
     // 远程服务器 Token
     val comixToken = SettingsDataStore.getComicApiTokenFlow(application)
@@ -154,17 +195,17 @@ class BookshelfViewModel(
         combine(
             _selectedRegionFilter,
             _selectedFormatFilter,
-            remoteEnabled,
+            remoteVisible,
             metadataEnabled
-        ) { region, format, remote, metadata ->
-            Quadruple(region, format, remote, metadata)
+        ) { region, format, remoteVis, metadata ->
+            Quadruple(region, format, remoteVis, metadata)
         },
         _sortOrder,
         _searchQuery
     ) { filters, order, query ->
         Triple(filters, order, query)
     }.flatMapLatest { (filters, order, query) ->
-        val (regionFilter, formatFilter, remoteEnabled, metadataEnabled) = filters
+        val (regionFilter, formatFilter, remoteVis, metadataEnabled) = filters
         
         // 发掘底层原始列表
         val sourceFlow = when (order) {
@@ -179,10 +220,10 @@ class BookshelfViewModel(
                 flow
             }
         }
-        val filters = Triple(regionFilter, formatFilter, remoteEnabled)
+        val filters = Triple(regionFilter, formatFilter, remoteVis)
         val metadata = metadataEnabled
         
-        sourceRefine(sourceFlow, regionFilter, formatFilter, remoteEnabled, metadata)
+        sourceRefine(sourceFlow, regionFilter, formatFilter, remoteVis, metadata)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -190,13 +231,13 @@ class BookshelfViewModel(
     )
     
     // 私有提炼流水线装配工段
-    private fun sourceRefine(sourceFlow: Flow<List<ComicEntity>>, regionFilter: ComicRegion?, formatFilter: ComicFormat?, remoteEnabled: Boolean, metadataEnabled: Boolean): Flow<List<BookshelfItem>> {
+    private fun sourceRefine(sourceFlow: Flow<List<ComicEntity>>, regionFilter: ComicRegion?, formatFilter: ComicFormat?, remoteVisible: Boolean, metadataEnabled: Boolean): Flow<List<BookshelfItem>> {
         val formatsToStrip = listOf("HC - ", "SC - ", "TPB - ", "OHC - ", "Absolute ")
 
         return sourceFlow.map { rawList ->
             //\ 1 处理过滤
             var filteredList = rawList
-            if (!remoteEnabled) filteredList = filteredList.filter { it.source != ComicSource.REMOTE }
+            if (!remoteVisible) filteredList = filteredList.filter { it.source != ComicSource.REMOTE }
             if (regionFilter != null) filteredList = filteredList.filter { it.region == regionFilter }
             if (formatFilter != null) filteredList = filteredList.filter { it.format == formatFilter }
 
@@ -418,8 +459,12 @@ class BookshelfViewModel(
             _autoScrapeState.value = AutoScrapeState.Loading(-1L)
             try {
                 val context = getApplication<Application>()
-                val baseUrl = SettingsDataStore.getComicApiBaseUrlFlow(context).firstOrNull() 
-                    ?: "https://comix.sakulik.xyz/"
+                val baseUrl = SettingsDataStore.getComicApiBaseUrlFlow(context).firstOrNull()
+                if (baseUrl.isNullOrBlank()) {
+                    Log.w("BookshelfSync", "API 地址为空，取消同步")
+                    _autoScrapeState.value = AutoScrapeState.Error(-1L, "请先设置远程服务器 API 地址")
+                    return@launch
+                }
                 
                 Log.d("BookshelfSync", "使用 BaseURL: $baseUrl")
 

@@ -495,7 +495,7 @@ fun BookshelfScreen(
     }
 
     if (showApiDialog) {
-        var inputUrl by remember(comixBaseUrl) { mutableStateOf(comixBaseUrl ?: "https://comix.sakulik.xyz/") }
+        var inputUrl by remember(comixBaseUrl) { mutableStateOf(comixBaseUrl ?: "") }
         var inputToken by remember(comixToken) { mutableStateOf(comixToken ?: "") }
         
         AlertDialog(
@@ -510,7 +510,7 @@ fun BookshelfScreen(
                         onValueChange = { inputUrl = it },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        placeholder = { Text("http://api..") },
+                        placeholder = { Text("http://192.168.1.3:3000/") },
                         leadingIcon = { Icon(painterResource(id = xyz.sakulik.comic.R.drawable.ic_link), contentDescription = null) }
                     )
                     Spacer(Modifier.height(16.dp))
