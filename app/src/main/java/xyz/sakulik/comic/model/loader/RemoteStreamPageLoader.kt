@@ -27,6 +27,17 @@ class RemoteStreamPageLoader(
     private val sessionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var isSharpenEnabled = false
 
+    init {
+        // 每次打开阅读该漫画时，触摸并更新缓存目录的“最后修改时间”，用于 LRU 自动过期清理
+        try {
+            if (cacheDir.exists()) {
+                cacheDir.setLastModified(System.currentTimeMillis())
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("RemoteLoader", "触摸缓存目录失败", e)
+        }
+    }
+
     fun setSharpenEnabled(enabled: Boolean) { isSharpenEnabled = enabled }
 
     override suspend fun getPageCount(): Int = totalPages

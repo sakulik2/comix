@@ -91,6 +91,10 @@ class BookshelfViewModel(
                 RetrofitClient.updateTokens(vineKey, comixToken)
             }
         }
+        // 启动后台自动清理过期的远程漫画本地 L2 缓存 (LRU 算法，限制总大小不超过 500MB)
+        viewModelScope.launch(Dispatchers.IO) {
+            autoCleanRemoteCache()
+        }
     }
     
     private val _sortOrder = savedStateHandle.getStateFlow("sortOrder", SortOrder.LAST_READ)
@@ -563,6 +567,53 @@ class BookshelfViewModel(
             dao.update(comic)
         }
     }
+
+    /**
+     * 自动清理过期的远程漫画本地 L2 缓存 (LRU 算法)
+     * 限制总大小不超过 500MB，超出时自动按最后访问时间排序，淘汰最久未看的漫画缓存
+     */
+    private fun autoCleanRemoteCache(maxSizeBytes: Long = 500 * 1024 * 1024L) {
+        try {
+            val remoteCacheDir = java.io.File(getApplication<Application>().cacheDir, "remote_l2")
+            if (!remoteCacheDir.exists() || !remoteCacheDir.isDirectory) return
+
+            val comicDirs = remoteCacheDir.listFiles()?.filter { it.isDirectory } ?: return
+            if (comicDirs.isEmpty()) return
+
+            var totalSize = 0L
+            val dirInfos = comicDirs.map { dir ->
+                val size = getDirectorySize(dir)
+                totalSize += size
+                DirInfo(dir, dir.lastModified(), size)
+            }
+
+            if (totalSize > maxSizeBytes) {
+                val sortedDirs = dirInfos.sortedBy { it.lastModified }
+                var currentSize = totalSize
+                for (info in sortedDirs) {
+                    info.dir.deleteRecursively()
+                    currentSize -= info.size
+                    Log.d("BookshelfVM", "自动清理过期远程缓存: ${info.dir.name}, 释放了 ${info.size / 1024 / 1024}MB")
+                    if (currentSize <= maxSizeBytes) {
+                        break
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("BookshelfVM", "自动清理远程缓存异常:", e)
+        }
+    }
+
+    private fun getDirectorySize(directory: java.io.File): Long {
+        var size = 0L
+        val files = directory.listFiles() ?: return 0L
+        for (file in files) {
+            size += if (file.isDirectory) getDirectorySize(file) else file.length()
+        }
+        return size
+    }
+
+    private data class DirInfo(val dir: java.io.File, val lastModified: Long, val size: Long)
 }
 
 // 辅助数据结构
