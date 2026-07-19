@@ -71,7 +71,7 @@ class RemoteStreamPageLoader(
 
         // 解析尺寸并应用增强
         if (cacheFile.exists()) {
-            val bitmap = BitmapFactory.decodeFile(cacheFile.absolutePath)
+            val bitmap = decodeFileSafely(cacheFile.absolutePath, width, height)
             if (bitmap != null) {
                 val res = bitmap.width to bitmap.height
                 dimensionsCache[pageIndex] = res
@@ -149,6 +149,47 @@ class RemoteStreamPageLoader(
         } catch (e: Exception) {
             android.util.Log.e("RemoteLoader", "Evict cache failed: ${e.message}")
         }
+    }
+
+    private fun decodeFileSafely(path: String, reqWidth: Int, reqHeight: Int): Bitmap? {
+        try {
+            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(path, opts)
+            
+            val sampleSize = calculateInSampleSize(opts, reqWidth, reqHeight)
+            val decodeOpts = BitmapFactory.Options().apply {
+                inSampleSize = sampleSize
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            return BitmapFactory.decodeFile(path, decodeOpts)
+        } catch (e: Throwable) {
+            android.util.Log.e("RemoteLoader", "Safely decoding bitmap failed for $path", e)
+            return null
+        }
+    }
+
+    private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+        val height = options.outHeight
+        val width = options.outWidth
+        if (height <= 0 || width <= 0) return 1
+        var inSampleSize = 1
+
+        // 1. 根据请求的宽度和高度做缩放计算
+        if (height > reqHeight || width > reqWidth) {
+            val halfHeight: Int = height / 2
+            val halfWidth: Int = width / 2
+            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                inSampleSize *= 2
+            }
+        }
+
+        // 2. [核心防御] 强行保障解压后的位图大小不超过 80MB (20,971,520 像素)，防止 Canvas 绘图抛出 Too Large 崩溃
+        val maxSizeBytes = 80 * 1024 * 1024L
+        while ((width.toLong() * height.toLong() * 4L) / (inSampleSize * inSampleSize) > maxSizeBytes) {
+            inSampleSize *= 2
+        }
+
+        return inSampleSize
     }
 
     override fun close() {

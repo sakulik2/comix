@@ -106,6 +106,8 @@ class LocalPdfPageLoader(
     private fun calculateInSampleSize(options: android.graphics.BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
         val (height: Int, width: Int) = options.outHeight to options.outWidth
         var inSampleSize = 1
+        
+        // 1. 根据请求的宽度和高度做缩放计算
         if (height > reqHeight || width > reqWidth) {
             val halfHeight: Int = height / 2
             val halfWidth: Int = width / 2
@@ -113,6 +115,13 @@ class LocalPdfPageLoader(
                 inSampleSize *= 2
             }
         }
+        
+        // 2. [核心防御] 强行保障解压后的位图大小不超过 80MB (20,971,520 像素)，防止 Canvas 绘图抛出 Too Large 崩溃
+        val maxSizeBytes = 80 * 1024 * 1024L
+        while ((width.toLong() * height.toLong() * 4L) / (inSampleSize * inSampleSize) > maxSizeBytes) {
+            inSampleSize *= 2
+        }
+        
         return inSampleSize
     }
 

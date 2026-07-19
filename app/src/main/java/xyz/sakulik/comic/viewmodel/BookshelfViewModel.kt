@@ -103,28 +103,7 @@ class BookshelfViewModel(
             ) { url, token ->
                 url to token
             }.collectLatest { (url, token) ->
-                if (url.isNullOrBlank()) {
-                    _isServerReachable.value = false
-                    return@collectLatest
-                }
-                withContext(Dispatchers.IO) {
-                    try {
-                        val apiService = RetrofitClient.createService(
-                            context = application,
-                            baseUrl = if (url.endsWith("/")) url else "$url/",
-                            serviceClass = ComicApiService::class.java
-                        )
-                        // 限时 3 秒请求书架，校验连通状态
-                        kotlinx.coroutines.withTimeout(3000) {
-                            apiService.getComics()
-                        }
-                        _isServerReachable.value = true
-                        Log.d("BookshelfVM", "服务器连通校验成功: $url, 远程漫画已显示。")
-                    } catch (e: Exception) {
-                        Log.e("BookshelfVM", "服务器连通校验失败: $url, 远程漫画已隐藏: ${e.message}")
-                        _isServerReachable.value = false
-                    }
-                }
+                checkServerConnectivity()
             }
         }
     }
@@ -347,7 +326,7 @@ class BookshelfViewModel(
         )
     }
 
-    // 全量刷新：核对已授权表与 DB 的镜像差异
+    // 全量刷新：核对已授权表与 DB 的镜像差异，并顺便更新服务器连通性状态
     fun scanAllFolders() {
         val workRequest = OneTimeWorkRequestBuilder<LibraryScanWorker>()
             .addTag("SCAN_LIBRARY_WORK")
@@ -355,6 +334,40 @@ class BookshelfViewModel(
         WorkManager.getInstance(getApplication()).enqueueUniqueWork(
             "LibraryScan_All", ExistingWorkPolicy.KEEP, workRequest
         )
+        // 顺便校验一次服务器，实现一键刷新全连通
+        checkServerConnectivity()
+    }
+
+    /**
+     * 主动检测 Comix 远程服务器的连通性并更新可见状态
+     */
+    fun checkServerConnectivity() {
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            val baseUrl = SettingsDataStore.getComicApiBaseUrlFlow(context).firstOrNull()
+            if (baseUrl.isNullOrBlank()) {
+                _isServerReachable.value = false
+                return@launch
+            }
+            withContext(Dispatchers.IO) {
+                try {
+                    val apiService = RetrofitClient.createService(
+                        context = context,
+                        baseUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/",
+                        serviceClass = ComicApiService::class.java
+                    )
+                    // 限时 3 秒请求书架，校验连通状态
+                    kotlinx.coroutines.withTimeout(3000) {
+                        apiService.getComics()
+                    }
+                    _isServerReachable.value = true
+                    Log.d("BookshelfVM", "主动校验服务器连通成功: $baseUrl, 远程漫画已显示。")
+                } catch (e: Exception) {
+                    Log.e("BookshelfVM", "主动校验服务器连通失败: $baseUrl, 已隐藏远程漫画: ${e.message}")
+                    _isServerReachable.value = false
+                }
+            }
+        }
     }
 
     // 自动刮削相关状态
@@ -526,9 +539,11 @@ class BookshelfViewModel(
                     }
                 }
                 Log.d("BookshelfSync", "同步成功")
+                _isServerReachable.value = true // 同步成功，说明服务器可达，更新状态以显示远程漫画
                 _autoScrapeState.value = AutoScrapeState.Done(-1L)
             } catch (e: Exception) {
                 Log.e("BookshelfSync", "同步失败: ${e.message}", e)
+                _isServerReachable.value = false // 同步失败，判定服务器不可达，更新状态以隐藏远程漫画
                 _autoScrapeState.value = AutoScrapeState.Error(-1L, "同步失败: ${e.localizedMessage}")
             }
         }
