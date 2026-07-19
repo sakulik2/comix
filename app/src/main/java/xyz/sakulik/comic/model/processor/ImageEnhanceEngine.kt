@@ -44,27 +44,6 @@ object ImageEnhanceEngine {
         // 2. 绘制底层（带对比度增强）
         canvas.drawBitmap(src, 0f, 0f, paint)
 
-        // 3. 执行卷积锐化 (Convolution Sharpening)
-        // 原理：通过叠加带权重的邻域像素来强化边缘
-        // 我们在 Canvas 层面通过 5 次绘制模拟 3x3 卷积内核：
-        // [ 0 -1  0]
-        // [-1  5 -1]
-        // [ 0 -1  0]
-        // 5 * Center - (Top + Bottom + Left + Right)
-        
-        val sharpenPaint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
-            // 设置叠加模式，模拟内核减法
-            // 注意：Canvas 模拟卷积效果有限，但比 1px 偏移重影法更精准
-            alpha = 70 // 锐化强度控制
-        }
-
-        // 绘制微弱位移层来强化边缘细节
-        // 这种方式比纯像素循环快得多，且在移动端屏幕上效果理想
-        canvas.drawBitmap(src, -1.2f, 0f, sharpenPaint)
-        canvas.drawBitmap(src, 1.2f, 0f, sharpenPaint)
-        canvas.drawBitmap(src, 0f, -1.2f, sharpenPaint)
-        canvas.drawBitmap(src, 0f, 1.2f, sharpenPaint)
-
         return dest
     }
 }

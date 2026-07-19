@@ -11,6 +11,8 @@ import xyz.sakulik.comic.model.db.ComicFormat
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * 核心刮削调度引擎 —— 解耦自 ViewModel，允许在 Worker 中异步静默执行
@@ -18,7 +20,7 @@ import java.util.UUID
 object MetadataScraper {
     private val client = OkHttpClient()
 
-    suspend fun autoScrape(context: Context, comic: ComicEntity) {
+    suspend fun autoScrape(context: Context, comic: ComicEntity) = withContext(Dispatchers.IO) {
         val dao = AppDatabase.getDatabase(context).comicDao()
         val repository = MetadataRepository(context)
 
@@ -81,7 +83,7 @@ object MetadataScraper {
                 if (isN52File && isN52Result) score += 50
                 
                 score
-            } ?: return
+            } ?: return@withContext
 
             var currentIssueTitle = comic.issueTitle
             var currentIssueNumber = comic.issueNumber ?: comic.volumeNumber // [TPB 关键映射] 将卷号作为期号用于抓取

@@ -2,13 +2,23 @@ package xyz.sakulik.comic.ui.components
 
 import android.graphics.Bitmap
 import android.net.Uri
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -17,6 +27,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import xyz.sakulik.comic.model.loader.ComicPageLoader
 import xyz.sakulik.comic.ui.ZoomableImage
@@ -38,6 +49,9 @@ fun ComicPageItem(
     
     // 承载着这一块屏幕真正的渲染能力边界参数
     var containerSize by remember { mutableStateOf(Pair(0, 0)) }
+    
+    var isError by remember { mutableStateOf(false) }
+    var retryTrigger by remember { mutableIntStateOf(0) }
 
     // 核心显存回收：当这一页面销毁或准备复用时，归还 Bitmap
     androidx.compose.runtime.DisposableEffect(pageIndex) {
@@ -48,13 +62,19 @@ fun ComicPageItem(
     }
 
     // 当且仅当这一页面得到了分配给它的物理尺寸边界时，才呼叫深源层引擎释放出匹配的数据流
-    LaunchedEffect(containerSize, pageIndex) {
+    LaunchedEffect(containerSize, pageIndex, retryTrigger) {
         if (containerSize.first > 0 && containerSize.second > 0 && pageData == null) {
-            pageData = loader.getPageData(
+            isError = false
+            val data = loader.getPageData(
                 pageIndex = pageIndex,
                 width = containerSize.first,
                 height = containerSize.second
             )
+            if (data == null) {
+                isError = true
+            } else {
+                pageData = data
+            }
         }
     }
 
@@ -69,34 +89,56 @@ fun ComicPageItem(
             },
         contentAlignment = Alignment.Center
     ) {
-        when (val data = pageData) {
-            null -> {
-                CircularProgressIndicator()
+        if (isError) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable { retryTrigger++ }
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = "加载失败",
+                    tint = MaterialTheme.colorScheme.error
+                )
+                Text(
+                    text = "加载失败，点击重试",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
             }
-            is Bitmap -> {
-                if (enableZoom) {
-                    ZoomableImage(
-                        bitmap = data,
-                        onScaleChanged = onScaleChanged,
-                        onTap = onTap
-                    )
-                } else {
-                    androidx.compose.foundation.Image(
-                        bitmap = data.asImageBitmap(),
-                        contentDescription = "漫画页",
+        } else {
+            when (val data = pageData) {
+                null -> {
+                    CircularProgressIndicator()
+                }
+                is Bitmap -> {
+                    if (enableZoom) {
+                        ZoomableImage(
+                            bitmap = data,
+                            onScaleChanged = onScaleChanged,
+                            onTap = onTap
+                        )
+                    } else {
+                        androidx.compose.foundation.Image(
+                            bitmap = data.asImageBitmap(),
+                            contentDescription = "漫画页",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit
+                        )
+                    }
+                }
+                is String -> {
+                    // 云端模式：直接使用 Coil 加载 URL
+                    AsyncImage(
+                        model = data,
+                        contentDescription = "云端漫画页",
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Fit
                     )
                 }
-            }
-            is String -> {
-                // 云端模式：直接使用 Coil 加载 URL
-                AsyncImage(
-                    model = data,
-                    contentDescription = "云端漫画页",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Fit
-                )
             }
         }
     }

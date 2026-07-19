@@ -99,16 +99,62 @@ class LibraryScanWorker(
                             val newCoverPath = if (extractSuccess && coverFile.exists()) coverFile.absolutePath else null
 
                             if (existing == null) {
+                                var series = parsed.seriesName
+                                var region = parsed.region
+                                var format = parsed.format
+                                var issueNum = parsed.issueNumber
+                                var volNum = parsed.volumeNumber
+                                var year = parsed.year
+                                
+                                var authors: String? = null
+                                var summary: String? = null
+                                var genres: String? = null
+                                var publisher: String? = null
+                                var rating: Float? = null
+
+                                if (extension == "cbz" || extension == "zip") {
+                                    try {
+                                        xyz.sakulik.comic.model.metadata.LocalComicInfoParser.parseFromZip(applicationContext, file.uri)?.let { local ->
+                                            series = local.series ?: series
+                                            authors = local.getAllAuthors() ?: authors
+                                            summary = local.summary ?: summary
+                                            genres = local.genre ?: genres
+                                            publisher = local.publisher ?: publisher
+                                            rating = local.rating ?: rating
+                                            volNum = local.volume?.toFloat() ?: volNum
+                                            issueNum = local.number?.toFloatOrNull() ?: issueNum
+                                            year = local.year?.toString() ?: year
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e("LibraryScanWorker", "Failed to parse local ComicInfo.xml: ${e.message}")
+                                    }
+                                }
+
+                                val finalVolNum = volNum
+                                val finalIssueNum = issueNum
+
+                                val betterTitle = buildString {
+                                    append(series)
+                                    if (finalVolNum != null) append(" Vol.${if (finalVolNum % 1f == 0f) finalVolNum.toInt() else finalVolNum}")
+                                    if (finalIssueNum != null) append(" #${if (finalIssueNum % 1f == 0f) finalIssueNum.toInt() else finalIssueNum}")
+                                }.trim().ifEmpty { originalName.substringBeforeLast('.') }
+
                                 val entity = ComicEntity(
-                                    title = originalName,
+                                    title = betterTitle,
                                     uri = fileUriStr,
                                     extension = extension,
                                     coverCachePath = newCoverPath,
-                                    seriesName = parsed.seriesName,
-                                    region = parsed.region,
-                                    format = parsed.format,
-                                    issueNumber = parsed.issueNumber,
-                                    volumeNumber = parsed.volumeNumber,
+                                    seriesName = series,
+                                    region = region,
+                                    format = format,
+                                    issueNumber = finalIssueNum,
+                                    volumeNumber = finalVolNum,
+                                    year = year,
+                                    authors = authors,
+                                    summary = summary,
+                                    genres = genres,
+                                    publisher = publisher,
+                                    rating = rating,
                                     addedTime = System.currentTimeMillis(),
                                     source = xyz.sakulik.comic.model.db.ComicSource.LOCAL,
                                     location = fileUriStr

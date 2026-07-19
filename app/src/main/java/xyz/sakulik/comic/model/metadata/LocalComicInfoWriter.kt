@@ -83,24 +83,69 @@ object LocalComicInfoWriter {
 
             val uri = Uri.parse(comic.location)
             if (uri.scheme == "content") {
-                val docFile = DocumentFile.fromSingleUri(context, uri) ?: return@withContext false
-                val parent = docFile.parentFile ?: return@withContext false
-                
-                val baseName = docFile.name?.substringBeforeLast(".") ?: "ComicInfo"
-                val xmlName = "ComicInfo.xml" // 规范写法，或者用 basename.xml
-                
-                // 查找是否已存在
-                var xmlFile = parent.findFile(xmlName)
-                if (xmlFile == null) {
-                    xmlFile = parent.createFile("text/xml", xmlName)
-                }
-                
-                xmlFile?.let {
-                    context.contentResolver.openOutputStream(it.uri)?.use { out ->
-                        out.write(xml.toByteArray())
+                if (android.provider.DocumentsContract.isDocumentUri(context, uri)) {
+                    val documentId = android.provider.DocumentsContract.getDocumentId(uri)
+                    val parentDocumentId = if (documentId.contains("/")) {
+                        documentId.substringBeforeLast("/")
+                    } else {
+                        null
                     }
-                    return@withContext true
+                    
+                    val persistedUris = context.contentResolver.persistedUriPermissions.map { it.uri }
+                    var treeUri: Uri? = null
+                    var matchedParentDocId: String? = parentDocumentId
+                    
+                    for (persistedUri in persistedUris) {
+                        if (persistedUri.authority == uri.authority) {
+                            try {
+                                val treeDocId = android.provider.DocumentsContract.getTreeDocumentId(persistedUri)
+                                if (documentId.startsWith(treeDocId)) {
+                                    treeUri = persistedUri
+                                    if (matchedParentDocId == null) {
+                                        matchedParentDocId = treeDocId
+                                    }
+                                    break
+                                }
+                            } catch (e: Exception) {}
+                        }
+                    }
+                    
+                    if (treeUri != null && matchedParentDocId != null) {
+                        val childrenUri = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, matchedParentDocId)
+                        var existingXmlUri: Uri? = null
+                        context.contentResolver.query(
+                            childrenUri,
+                            arrayOf(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID, android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+                            null, null, null
+                        )?.use { cursor ->
+                            val idIndex = cursor.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                            val nameIndex = cursor.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                            while (cursor.moveToNext()) {
+                                val name = cursor.getString(nameIndex)
+                                if (name.equals("ComicInfo.xml", ignoreCase = true)) {
+                                    val docId = cursor.getString(idIndex)
+                                    existingXmlUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+                                    break
+                                }
+                            }
+                        }
+                        
+                        val targetUri = existingXmlUri ?: android.provider.DocumentsContract.createDocument(
+                            context.contentResolver,
+                            android.provider.DocumentsContract.buildDocumentUriUsingTree(treeUri, matchedParentDocId),
+                            "text/xml",
+                            "ComicInfo.xml"
+                        )
+                        
+                        targetUri?.let {
+                            context.contentResolver.openOutputStream(it)?.use { out ->
+                                out.write(xml.toByteArray())
+                            }
+                            return@withContext true
+                        }
+                    }
                 }
+                return@withContext false
             } else {
                 // 普通文件路径
                 val file = File(comic.location)

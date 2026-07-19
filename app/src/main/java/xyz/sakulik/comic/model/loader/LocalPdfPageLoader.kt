@@ -148,8 +148,11 @@ class LocalPdfPageLoader(
             val rend = renderer ?: return@withLock null
             if (pageIndex !in 0 until rend.pageCount) return@withLock null
             val page = rend.openPage(pageIndex)
-            val size = page.width to page.height
-            page.close()
+            val size = try {
+                page.width to page.height
+            } finally {
+                page.close()
+            }
             dimensionsCache[pageIndex] = size
             size
         }
@@ -171,23 +174,26 @@ class LocalPdfPageLoader(
             
             try {
                 val page = rend.openPage(pageIndex)
-                
-                // 动态 DPI 采样：基于请求宽度与原始宽度的比例，最高 4 倍
-                val baseScale = width.toFloat() / page.width
-                val scale = baseScale.coerceIn(1.0f, 4.0f)
-                
-                val targetW = (page.width * scale).toInt().coerceAtLeast(1)
-                val targetH = (page.height * scale).toInt().coerceAtLeast(1)
-                
-                // 采用最高画质配置，从复用池获取 Bitmap
-                val bitmap = obtainBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
-                bitmap.eraseColor(android.graphics.Color.WHITE)
-                
-                val matrix = Matrix().apply { postScale(scale, scale) }
-                page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                page.close()
-                
-                android.util.Log.d("PdfLoader", "Live Render Page $pageIndex @ ${scale}x")
+                val bitmap = try {
+                    // 动态 DPI 采样：基于请求宽度与原始宽度的比例，最高 4 倍
+                    val baseScale = width.toFloat() / page.width
+                    val scale = baseScale.coerceIn(1.0f, 4.0f)
+                    
+                    val targetW = (page.width * scale).toInt().coerceAtLeast(1)
+                    val targetH = (page.height * scale).toInt().coerceAtLeast(1)
+                    
+                    // 采用最高画质配置，从复用池获取 Bitmap
+                    val bmp = obtainBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+                    bmp.eraseColor(android.graphics.Color.WHITE)
+                    
+                    val matrix = Matrix().apply { postScale(scale, scale) }
+                    page.render(bmp, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    
+                    android.util.Log.d("PdfLoader", "Live Render Page $pageIndex @ ${scale}x")
+                    bmp
+                } finally {
+                    page.close()
+                }
                 processEnhancement(bitmap)
             } catch (e: Exception) {
                 android.util.Log.e("PdfLoader", "Render error at $pageIndex: ${e.message}")
