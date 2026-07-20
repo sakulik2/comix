@@ -21,7 +21,9 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.AbstractSavedStateViewModelFactory
+import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -97,16 +99,16 @@ fun ComicAppNavHost() {
     val application = activity.application
     val bookshelfViewModel: BookshelfViewModel = viewModel(
         viewModelStoreOwner = activity,
-        factory = object : AbstractSavedStateViewModelFactory(activity, activity.intent?.extras) {
-            override fun <T : ViewModel> create(key: String, modelClass: Class<T>, handle: SavedStateHandle): T {
+        factory = viewModelFactory {
+            initializer {
+                val handle = createSavedStateHandle()
                 val db = AppDatabase.getDatabase(application)
-                @Suppress("UNCHECKED_CAST")
-                return BookshelfViewModel(
+                BookshelfViewModel(
                     application,
                     db.comicDao(),
                     db.collectionDao(),
                     handle
-                ) as T
+                )
             }
         }
     )

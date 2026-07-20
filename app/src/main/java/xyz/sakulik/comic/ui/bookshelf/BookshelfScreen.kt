@@ -132,7 +132,7 @@ fun BookshelfScreen(
                         }
                     }
                 )
-                ScrollableTabRow(
+                SecondaryScrollableTabRow(
                     selectedTabIndex = when(selectedRegion) {
                         null -> 0
                         ComicRegion.COMIC -> 1
