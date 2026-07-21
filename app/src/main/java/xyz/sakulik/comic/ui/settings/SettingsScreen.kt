@@ -1,5 +1,9 @@
 package xyz.sakulik.comic.ui.settings
 
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -126,6 +130,55 @@ fun SettingsScreen(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text("保存云端配置")
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    scope.launch {
+                                        var url = apiUrlInput.trim()
+                                        if (url.isEmpty()) {
+                                            snackbarHostState.showSnackbar("❌ 请先输入 API Base URL")
+                                            return@launch
+                                        }
+                                        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                                            url = "http://$url"
+                                        }
+                                        val testUrl = if (url.endsWith("/")) "${url}api" else "$url/api"
+                                        val token = apiTokenInput.trim()
+
+                                        val status = withContext(Dispatchers.IO) {
+                                            try {
+                                                val connection = URL(testUrl).openConnection() as HttpURLConnection
+                                                connection.requestMethod = "GET"
+                                                connection.connectTimeout = 3000
+                                                connection.readTimeout = 3000
+                                                if (token.isNotEmpty()) {
+                                                    connection.setRequestProperty("x-comix-token", token)
+                                                }
+                                                val code = connection.responseCode
+                                                if (code == 200) {
+                                                    val text = connection.inputStream.bufferedReader().readText()
+                                                    if (text.contains("comix.js")) {
+                                                        val version = text.substringAfter("apiVersion\":\"").substringBefore("\"")
+                                                        "✅ 连接成功！服务端版本：$version"
+                                                    } else {
+                                                        "⚠️ 连接成功但响应格式不符"
+                                                    }
+                                                } else if (code == 401) {
+                                                    "❌ 鉴权失败：API Token 错误或未配置"
+                                                } else {
+                                                    "❌ 连接失败，状态码：$code"
+                                                }
+                                            } catch (e: java.lang.Exception) {
+                                                "❌ 无法连接到服务器: ${e.message}"
+                                            }
+                                        }
+                                        snackbarHostState.showSnackbar(status)
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("测试服务器连接")
                             }
                             Spacer(modifier = Modifier.height(24.dp))
                             Text("危险区域", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)

@@ -20,8 +20,6 @@ interface ComicApiService {
      */
     @GET("api/comics/{id}")
     suspend fun getComicDetail(@Path("id") comicId: String): ComicDetailResponse
-    
-    //\ .. 原有的 getPageUrl 定义
 }
 
 data class CloudComicItem(

@@ -20,8 +20,8 @@ android {
         applicationId = "xyz.sakulik.comic"
         minSdk = 24
         targetSdk = 34
-        versionCode = 16
-        versionName = "1.7.3"
+        versionCode = 17
+        versionName = "1.7.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
         ndk {

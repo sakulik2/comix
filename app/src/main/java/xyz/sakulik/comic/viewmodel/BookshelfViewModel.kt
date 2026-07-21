@@ -491,6 +491,28 @@ class BookshelfViewModel(
                 Log.d("BookshelfSync", "获取到 ${remoteComics.size} 本远程漫画")
                 
                 withContext(Dispatchers.IO) {
+                    // --- 自动清除已在云端物理删除的漫画记录 ---
+                    val normalizedBaseUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+                    val allLocalComics = dao.getAllComicsUnordered()
+                    val localRemoteComics = allLocalComics.filter {
+                        it.source == ComicSource.REMOTE && (it.uri?.startsWith(normalizedBaseUrl) == true)
+                    }
+                    val remoteIds = remoteComics.map { it.id }.toSet()
+                    val toDelete = localRemoteComics.filter { it.location !in remoteIds }
+                    
+                    toDelete.forEach { comic ->
+                        Log.d("BookshelfSync", "自动清除云端已失效漫画: ${comic.title}")
+                        // 清除本地封面图缓存以释放空间
+                        comic.coverCachePath?.let { path ->
+                            if (!path.startsWith("http")) {
+                                val file = java.io.File(path)
+                                if (file.exists()) file.delete()
+                            }
+                        }
+                        dao.delete(comic)
+                    }
+
+                    // --- 插入或更新其余漫画 ---
                     remoteComics.forEach { item ->
                         val existing = dao.getComicByLocation(item.id)
                         
@@ -498,9 +520,8 @@ class BookshelfViewModel(
                         val absoluteCoverUrl = if (item.coverUrl.startsWith("http")) {
                             item.coverUrl
                         } else {
-                            val normalizedBase = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
                             val relativePath = item.coverUrl.removePrefix("/")
-                            "$normalizedBase$relativePath"
+                            "$normalizedBaseUrl$relativePath"
                         }
 
                         if (existing == null) {
