@@ -77,37 +77,7 @@ class BookshelfViewModel(
 
     private val sharedOkHttpClient = OkHttpClient()
     
-    init {
-        // 冷启动即刻自动排查全部记录与图鉴，实现绝对同步
-        scanAllFolders()
-        // 订阅双端 API Key 变更并同步推送给 RetrofitClient，使拦截器无需 runBlocking
-        viewModelScope.launch {
-            kotlinx.coroutines.flow.combine(
-                SettingsDataStore.getComicVineApiKeyFlow(application),
-                SettingsDataStore.getComicApiTokenFlow(application)
-            ) { vineKey, comixToken ->
-                vineKey to comixToken
-            }.collect { (vineKey, comixToken) ->
-                RetrofitClient.updateTokens(vineKey, comixToken)
-            }
-        }
-        // 启动后台自动清理过期的远程漫画本地 L2 缓存 (LRU 算法，限制总大小不超过 500MB)
-        viewModelScope.launch(Dispatchers.IO) {
-            autoCleanRemoteCache()
-        }
-        // 监控远程配置变更（Base URL 与 Token），实时/冷启动时触发连通性校验以刷新可见性状态
-        viewModelScope.launch {
-            kotlinx.coroutines.flow.combine(
-                SettingsDataStore.getComicApiBaseUrlFlow(application),
-                SettingsDataStore.getComicApiTokenFlow(application)
-            ) { url, token ->
-                url to token
-            }.collectLatest { (url, token) ->
-                checkServerConnectivity()
-            }
-        }
-    }
-    
+
     private val _sortOrder = savedStateHandle.getStateFlow("sortOrder", SortOrder.LAST_READ)
     val sortOrder = _sortOrder
 
@@ -208,6 +178,37 @@ class BookshelfViewModel(
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
     )
+
+    init {
+        // 冷启动即刻自动排查全部记录与图鉴，实现绝对同步
+        scanAllFolders()
+        // 订阅双端 API Key 变更并同步推送给 RetrofitClient，使拦截器无需 runBlocking
+        viewModelScope.launch {
+            kotlinx.coroutines.flow.combine(
+                SettingsDataStore.getComicVineApiKeyFlow(application),
+                SettingsDataStore.getComicApiTokenFlow(application)
+            ) { vineKey, comixToken ->
+                vineKey to comixToken
+            }.collect { (vineKey, comixToken) ->
+                RetrofitClient.updateTokens(vineKey, comixToken)
+            }
+        }
+        // 启动后台自动清理过期的远程漫画本地 L2 缓存 (LRU 算法，限制总大小不超过 500MB)
+        viewModelScope.launch(Dispatchers.IO) {
+            autoCleanRemoteCache()
+        }
+        // 监控远程配置变更（Base URL 与 Token），实时/冷启动时触发连通性校验以刷新可见性状态
+        viewModelScope.launch {
+            kotlinx.coroutines.flow.combine(
+                SettingsDataStore.getComicApiBaseUrlFlow(application),
+                SettingsDataStore.getComicApiTokenFlow(application)
+            ) { url, token ->
+                url to token
+            }.collectLatest { (url, token) ->
+                checkServerConnectivity()
+            }
+        }
+    }
     
     // 私有提炼流水线装配工段
     private fun sourceRefine(sourceFlow: Flow<List<ComicEntity>>, regionFilter: ComicRegion?, formatFilter: ComicFormat?, remoteVisible: Boolean, metadataEnabled: Boolean): Flow<List<BookshelfItem>> {
@@ -614,6 +615,52 @@ class BookshelfViewModel(
         viewModelScope.launch {
             collectionDao.addComicToCollection(xyz.sakulik.comic.model.db.CollectionComicCrossRef(collectionId, comicId))
         }
+    }
+
+    fun addComicsToCollection(collectionId: Long, comicIds: List<Long>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val crossRefs = comicIds.map { xyz.sakulik.comic.model.db.CollectionComicCrossRef(collectionId, it) }
+            collectionDao.addComicsToCollection(crossRefs)
+        }
+    }
+
+    fun addSeriesToCollection(collectionId: Long, seriesGroup: SeriesGroupData) {
+        val comicIds = seriesGroup.books.map { it.id }
+        addComicsToCollection(collectionId, comicIds)
+    }
+
+    /**
+     * 拖拽合成/加入合集核心逻辑
+     */
+    fun combineItemsIntoCollection(draggedItem: BookshelfItem, targetItem: BookshelfItem) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val draggedComicIds = extractComicIds(draggedItem)
+            val targetComicIds = extractComicIds(targetItem)
+
+            when (targetItem) {
+                is BookshelfItem.Collection -> {
+                    val targetCollId = targetItem.collection.collection.id
+                    addComicsToCollection(targetCollId, draggedComicIds)
+                }
+                is BookshelfItem.SingleComic, is BookshelfItem.SeriesGroup -> {
+                    val suggestedName = when {
+                        targetItem is BookshelfItem.SeriesGroup -> targetItem.group.seriesName
+                        draggedItem is BookshelfItem.SeriesGroup -> draggedItem.group.seriesName
+                        else -> "新合集"
+                    }
+                    val newCollId = collectionDao.insertCollection(xyz.sakulik.comic.model.db.CollectionEntity(name = suggestedName))
+                    val allComicIds = (draggedComicIds + targetComicIds).distinct()
+                    val crossRefs = allComicIds.map { xyz.sakulik.comic.model.db.CollectionComicCrossRef(newCollId, it) }
+                    collectionDao.addComicsToCollection(crossRefs)
+                }
+            }
+        }
+    }
+
+    private fun extractComicIds(item: BookshelfItem): List<Long> = when (item) {
+        is BookshelfItem.SingleComic -> listOf(item.comic.id)
+        is BookshelfItem.SeriesGroup -> item.group.books.map { it.id }
+        is BookshelfItem.Collection -> item.collection.comics.map { it.id }
     }
 
     fun removeComicFromCollection(collectionId: Long, comicId: Long) {

@@ -21,6 +21,9 @@ interface CollectionDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun addComicToCollection(crossRef: CollectionComicCrossRef): Long
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun addComicsToCollection(crossRefs: List<CollectionComicCrossRef>): List<Long>
+
     @Query("DELETE FROM collection_comic_cross_ref WHERE collectionId = :collectionId AND comicId = :comicId")
     suspend fun removeComicFromCollection(collectionId: Long, comicId: Long): Int
 

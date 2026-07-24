@@ -42,6 +42,8 @@ import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.unit.sp
+import xyz.sakulik.comic.ui.components.DragDropFolderBox
+import xyz.sakulik.comic.ui.components.dragAndDropTarget
 import xyz.sakulik.comic.R
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
@@ -73,6 +75,7 @@ fun BookshelfScreen(
     var showMetadataOptions by remember { mutableStateOf(false) }
     var showMetadataDialog by remember { mutableStateOf<ComicEntity?>(null) }
     var showAddToCollectionDialog by remember { mutableStateOf<ComicEntity?>(null) }
+    var showAddSeriesToCollectionDialog by remember { mutableStateOf<SeriesGroupData?>(null) }
     var showCreateCollectionDialog by remember { mutableStateOf(false) }
     var showEditorDialog by remember { mutableStateOf<ComicEntity?>(null) }
     var showCollectionRenameDialog by remember { mutableStateOf<xyz.sakulik.comic.model.db.CollectionEntity?>(null) }
@@ -169,6 +172,16 @@ fun BookshelfScreen(
                         horizontalAlignment = Alignment.End,
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
+                        ExtendedFloatingActionButton(
+                            onClick = {
+                                showAddMenu = false
+                                showCreateCollectionDialog = true
+                            },
+                            icon = { Icon(Icons.Default.CreateNewFolder, null) },
+                            text = { Text("新建合集") },
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
                         if (remoteEnabled) {
                             ExtendedFloatingActionButton(
                                 onClick = { 
@@ -225,85 +238,108 @@ fun BookshelfScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
-        Column(modifier = Modifier.padding(padding).fillMaxSize()) {
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = viewModel::onSearchQueryChanged,
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                placeholder = { Text("搜索您的收藏...") },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                singleLine = true,
-                shape = RoundedCornerShape(100)
-            )
+        DragDropFolderBox(
+            onCombine = { dragged, target ->
+                viewModel.combineItemsIntoCollection(dragged, target)
+            },
+            modifier = Modifier.padding(padding)
+        ) { _ ->
+            Column(modifier = Modifier.fillMaxSize()) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = viewModel::onSearchQueryChanged,
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    placeholder = { Text("搜索您的收藏...") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(100)
+                )
 
-            scanProgress?.let { progress ->
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                Text(text = progress, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-            }
-
-            if (items.isEmpty() && searchQuery.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(80.dp), tint = MaterialTheme.colorScheme.outlineVariant)
-                        Spacer(Modifier.height(16.dp))
-                        Text("漫库目前是空的", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.outline)
-                        Text("点击右下角按钮添加您的漫画文件夹", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
-                    }
+                scanProgress?.let { progress ->
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    Text(text = progress, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                 }
-            } else {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(adaptiveColumns),
-                    contentPadding = PaddingValues(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    // ======= 合集板块 (仅在未搜索时显示) =======
-                    if (collections.isNotEmpty() && searchQuery.isEmpty()) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            Column(modifier = Modifier.padding(bottom = 8.dp)) {
-                                Text(
-                                    "我的合集",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(bottom = 12.dp)
-                                )
-                                LazyRow(
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                    contentPadding = PaddingValues(horizontal = 4.dp)
-                                ) {
-                                    items(collections) { colWithComics ->
-                                        CollectionSwimlaneItem(
-                                            collection = colWithComics,
-                                            onClick = { onCollectionClick(colWithComics.collection) },
-                                            onLongClick = { showCollectionRenameDialog = colWithComics.collection }
-                                        )
-                                    }
-                                }
-                                HorizontalDivider(modifier = Modifier.padding(top = 16.dp, bottom = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))
-                            }
+
+                if (items.isEmpty() && searchQuery.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(80.dp), tint = MaterialTheme.colorScheme.outlineVariant)
+                            Spacer(Modifier.height(16.dp))
+                            Text("漫库目前是空的", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.outline)
+                            Text("点击右下角按钮添加您的漫画文件夹", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
                         }
                     }
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(adaptiveColumns),
+                        contentPadding = PaddingValues(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        // ======= 合集板块 (仅在未搜索时显示) =======
+                        if (collections.isNotEmpty() && searchQuery.isEmpty()) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Column(modifier = Modifier.padding(bottom = 8.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            "我的合集",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        IconButton(
+                                            onClick = { showCreateCollectionDialog = true },
+                                            modifier = Modifier.size(24.dp)
+                                        ) {
+                                            Icon(Icons.Default.Add, contentDescription = "新建合集")
+                                        }
+                                    }
+                                    LazyRow(
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        contentPadding = PaddingValues(horizontal = 4.dp)
+                                    ) {
+                                        items(collections) { colWithComics ->
+                                            val collectionItem = BookshelfItem.Collection(colWithComics)
+                                            CollectionSwimlaneItem(
+                                                collection = colWithComics,
+                                                onClick = { onCollectionClick(colWithComics.collection) },
+                                                onLongClick = { showCollectionRenameDialog = colWithComics.collection },
+                                                modifier = Modifier.dragAndDropTarget(collectionItem)
+                                            )
+                                        }
+                                    }
+                                    HorizontalDivider(modifier = Modifier.padding(top = 16.dp, bottom = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))
+                                }
+                            }
+                        }
 
-                    items(items) { item ->
-                        when(item) {
-                            is BookshelfItem.SingleComic -> {
-                                ComicItem(
-                                    item = item,
-                                    isScrapingThis = autoScrapeState is AutoScrapeState.Loading && (autoScrapeState as AutoScrapeState.Loading).comicId == item.comic.id,
-                                    onClick = { onComicClick(item.comic) },
-                                    onLongClick = { contextComic = item.comic }
-                                )
-                            }
-                            is BookshelfItem.SeriesGroup -> {
-                                SeriesGroupItem(
-                                    group = item.group, 
-                                    onClick = { onSeriesClick(item.group) },
-                                    onLongClick = { contextComic = item.group.coverComic }
-                                )
-                            }
-                            is BookshelfItem.Collection -> {
-                                // Collections are handled separately above, this should not happen
+                        items(items) { item ->
+                            when(item) {
+                                is BookshelfItem.SingleComic -> {
+                                    ComicItem(
+                                        item = item,
+                                        isScrapingThis = autoScrapeState is AutoScrapeState.Loading && (autoScrapeState as AutoScrapeState.Loading).comicId == item.comic.id,
+                                        onClick = { onComicClick(item.comic) },
+                                        onLongClick = { contextComic = item.comic },
+                                        modifier = Modifier.dragAndDropTarget(item)
+                                    )
+                                }
+                                is BookshelfItem.SeriesGroup -> {
+                                    SeriesGroupItem(
+                                        group = item.group, 
+                                        onClick = { onSeriesClick(item.group) },
+                                        onLongClick = { contextComic = item.group.coverComic },
+                                        onAddSeriesToCollection = { showAddSeriesToCollectionDialog = item.group },
+                                        modifier = Modifier.dragAndDropTarget(item)
+                                    )
+                                }
+                                is BookshelfItem.Collection -> {
+                                    // Handled above
+                                }
                             }
                         }
                     }
@@ -565,6 +601,21 @@ fun BookshelfScreen(
         )
     }
 
+    showAddSeriesToCollectionDialog?.let { seriesGroup ->
+        AddToCollectionDialog(
+            collections = collections,
+            onDismiss = { showAddSeriesToCollectionDialog = null },
+            onCollectionSelected = { coll ->
+                viewModel.addSeriesToCollection(coll.id, seriesGroup)
+                showAddSeriesToCollectionDialog = null
+            },
+            onCreateNewCollection = {
+                showAddSeriesToCollectionDialog = null
+                showCreateCollectionDialog = true
+            }
+        )
+    }
+
     if (showCreateCollectionDialog) {
         CreateCollectionDialog(
             onDismiss = { showCreateCollectionDialog = false },
@@ -695,11 +746,12 @@ fun ComicItem(
     item: BookshelfItem.SingleComic,
     onClick: () -> Unit, 
     onLongClick: () -> Unit, 
-    isScrapingThis: Boolean
+    isScrapingThis: Boolean,
+    modifier: Modifier = Modifier
 ) {
     val comic = item.comic
     ElevatedCard(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .combinedClickable(onClick = onClick, onLongClick = onLongClick), 
         shape = RoundedCornerShape(12.dp)
@@ -757,9 +809,15 @@ fun ComicItem(
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun SeriesGroupItem(group: SeriesGroupData, onClick: () -> Unit, onLongClick: () -> Unit) {
+fun SeriesGroupItem(
+    group: SeriesGroupData, 
+    onClick: () -> Unit, 
+    onLongClick: () -> Unit,
+    onAddSeriesToCollection: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .combinedClickable(
                 onClick = onClick,
@@ -1013,12 +1071,13 @@ private fun MetadataItem(label: String, value: String?) {
 fun CollectionSwimlaneItem(
     collection: xyz.sakulik.comic.model.db.CollectionWithComics,
     onClick: () -> Unit,
-    onLongClick: () -> Unit
+    onLongClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
-        modifier = Modifier
+        modifier = modifier
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick
