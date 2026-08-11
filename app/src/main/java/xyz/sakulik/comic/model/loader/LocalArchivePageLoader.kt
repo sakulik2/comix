@@ -65,6 +65,7 @@ class LocalArchivePageLoader(
     private var sessionMirror: File? = null
     @Volatile private var isMirrorReady = false
     @Volatile private var isStreamingOnly = false
+    @Volatile private var mirrorLimitExceeded = false
     
     // 档案条目信息缓存（按文件名排序确保页码一致性）
     private var cachedEntries: List<String>? = null
@@ -85,7 +86,12 @@ class LocalArchivePageLoader(
     private var activeSortedHeaders: List<Any>? = null
 
     private suspend fun ensureActiveSession(): Boolean = withContext(Dispatchers.IO) {
-        if (activeChannel != null && (activeRarArchive != null || activeZipIndexer != null)) return@withContext true
+        if (
+            activeChannel != null &&
+            (activeRarArchive != null || activeSevenZipArchive != null || activeZipIndexer != null)
+        ) {
+            return@withContext true
+        }
         try {
             val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return@withContext false
             activePfd = pfd
@@ -230,28 +236,35 @@ class LocalArchivePageLoader(
             }
         }
         
-        stream?.use { 
-            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeStream(it, null, opts)
-            if (isImageSizeAllowed(opts.outWidth, opts.outHeight)) {
-                val res = opts.outWidth to opts.outHeight
-                pageDimensionsCache[pageIndex] = res
-                return@withContext res
+        stream?.use { rawStream ->
+            limitedPageStream(rawStream).use { limitedStream ->
+                val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeStream(limitedStream, null, opts)
+                if (isImageSizeAllowed(opts.outWidth, opts.outHeight)) {
+                    val res = opts.outWidth to opts.outHeight
+                    pageDimensionsCache[pageIndex] = res
+                    return@withContext res
+                }
             }
         }
         null
     }
 
     private fun obtainBitmap(w: Int, h: Int, config: Bitmap.Config): Bitmap {
-        val requiredBytes = w * h * (if (config == Bitmap.Config.RGB_565) 2 else 4)
+        val requiredBytes = w.toLong() * h.toLong() * (if (config == Bitmap.Config.RGB_565) 2L else 4L)
         synchronized(bitmapPool) {
             val it = bitmapPool.iterator()
             while (it.hasNext()) {
                 val b = it.next()
-                if (!b.isRecycled && b.isMutable && b.allocationByteCount >= requiredBytes) {
+                if (!b.isRecycled && b.isMutable && b.allocationByteCount.toLong() >= requiredBytes) {
                     it.remove()
-                    b.eraseColor(android.graphics.Color.TRANSPARENT)
-                    return b
+                    try {
+                        b.reconfigure(w, h, config)
+                        b.eraseColor(android.graphics.Color.TRANSPARENT)
+                        return b
+                    } catch (e: IllegalArgumentException) {
+                        b.recycle()
+                    }
                 }
             }
         }
@@ -290,9 +303,12 @@ class LocalArchivePageLoader(
                 try {
                     val fileSize = getUriSize(uri)
                     val available = getAvailableSpace()
-                    val HUGE_FILE_THRESHOLD = ArchiveResourceLimits.MAX_MIRROR_BYTES
-                    if (fileSize > HUGE_FILE_THRESHOLD || available < fileSize + 500 * 1024 * 1024) {
+                    val exceedsMirrorLimit = fileSize > ArchiveResourceLimits.MAX_MIRROR_BYTES
+                    val lacksMirrorSpace = fileSize > 0L &&
+                        (available < fileSize || available - fileSize < 500L * 1024 * 1024)
+                    if (exceedsMirrorLimit || lacksMirrorSpace) {
                         isStreamingOnly = true
+                        mirrorLimitExceeded = exceedsMirrorLimit
                         android.util.Log.i("ArchiveLoader", "Storage pressure or large file ($fileSize bytes), skipping mirror.")
                         return@withLock null
                     }
@@ -317,7 +333,11 @@ class LocalArchivePageLoader(
                     tempFile
                 } catch (e: Exception) {
                     pendingMirror?.delete()
-                    if (e.message?.contains("ENOSPC") == true) {
+                    if (e is ArchiveLimitExceededException) {
+                        mirrorLimitExceeded = true
+                        isStreamingOnly = true
+                        android.util.Log.i("ArchiveLoader", "Mirror size limit reached, switching permanently to direct access.")
+                    } else if (e.message?.contains("ENOSPC") == true) {
                         isStreamingOnly = true
                         android.util.Log.w("ArchiveLoader", "ENOSPC detected during mirroring, switching to streaming mode.")
                     }
@@ -370,10 +390,10 @@ class LocalArchivePageLoader(
                     if (count != null) return@withLock count
                     
                     val fSize = getUriSize(uri)
-                    val HUGE_FILE_THRESHOLD = 650L * 1024 * 1024
-                    if (fSize > HUGE_FILE_THRESHOLD) {
-                        android.util.Log.e("ArchiveLoader", "NIO Session failed for HUGE file ($fSize bytes). Refusing sequential scan fallback to avoid UI lockup.")
-                        return@withLock 0
+                    if (mirrorLimitExceeded || fSize > ArchiveResourceLimits.MAX_MIRROR_BYTES) {
+                        throw ArchiveRandomAccessRequiredException(
+                            "该漫画文件较大，但当前文件来源不支持随机读取；请使用系统文件选择器、内部存储或 SD 卡重新添加"
+                        )
                     }
 
                     android.util.Log.i("ArchiveLoader", "Scanning metadata via sequential stream (Slow Path)...")
@@ -456,6 +476,7 @@ class LocalArchivePageLoader(
                 return@withLock names.size
             } catch (e: Exception) {
                 e.printStackTrace()
+                if (e is ArchiveRandomAccessRequiredException) throw e
                 0
             }
         }
@@ -490,14 +511,18 @@ class LocalArchivePageLoader(
                                 // Attempt 1: System ZipFile (via /proc/self/fd)
                                 var result = activeZipFile?.let { zip ->
                                     zip.getEntry(entryName)?.let { zipEntry ->
-                                        zip.getInputStream(zipEntry).use { decodeImageStream(it, width, height) }
+                                        zip.getInputStream(zipEntry).use {
+                                            decodeImageStream(limitedPageStream(it), width, height)
+                                        }
                                     }
                                 }
                                 
                                 // Attempt 2: Manual ZipFastIndexer fallback
                                 if (result == null) {
                                     result = activeZipIndexer?.let { indexer ->
-                                        indexer.getEntryInputStream(entryName)?.use { decodeImageStream(it, width, height) }
+                                        indexer.getEntryInputStream(entryName)?.use {
+                                            decodeImageStream(limitedPageStream(it), width, height)
+                                        }
                                     }
                                 }
                                 result
@@ -506,7 +531,7 @@ class LocalArchivePageLoader(
                                 if (activeRarArchive != null) {
                                     val header = entry as com.github.junrar.rarfile.FileHeader
                                     activeRarArchive?.getInputStream(header)?.use { stream ->
-                                        decodeImageStream(stream, width, height)
+                                        decodeImageStream(limitedPageStream(stream), width, height)
                                     }
                                 } else if (activeSevenZipArchive != null) {
                                     val meta = entry as SevenZipMeta
@@ -547,7 +572,9 @@ class LocalArchivePageLoader(
                                 ArchiveResourceLimits.requireEntryCount(zip.size().toLong())
                                 val entries = zip.entries().asSequence().filter { !it.isDirectory && isImage(it.name) }.sortedBy { it.name }.toList()
                                 if (pageIndex in entries.indices) {
-                                    zip.getInputStream(entries[pageIndex]).use { decodeImageStream(it, width, height) }
+                                    zip.getInputStream(entries[pageIndex]).use {
+                                        decodeImageStream(limitedPageStream(it), width, height)
+                                    }
                                 } else null
                             }
                         }
@@ -557,7 +584,9 @@ class LocalArchivePageLoader(
                                 ArchiveResourceLimits.requireEntryCount(fileHeaders.size.toLong())
                                 val headers = fileHeaders.filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
                                 if (pageIndex in headers.indices) {
-                                    archive.getInputStream(headers[pageIndex]).use { decodeImageStream(it, width, height) }
+                                    archive.getInputStream(headers[pageIndex]).use {
+                                        decodeImageStream(limitedPageStream(it), width, height)
+                                    }
                                 } else null
                             }
                         }
@@ -581,7 +610,9 @@ class LocalArchivePageLoader(
                                 entryCount++
                                 ArchiveResourceLimits.requireEntryCount(entryCount)
                                 if (!entry.isDirectory && isImage(entry.name)) {
-                                    if (idx == pageIndex) return@withLock decodeImageStream(zis, width, height)
+                                    if (idx == pageIndex) {
+                                        return@withLock decodeImageStream(limitedPageStream(zis), width, height)
+                                    }
                                     idx++
                                 }
                                 zis.closeEntry()
@@ -594,7 +625,9 @@ class LocalArchivePageLoader(
                                 ArchiveResourceLimits.requireEntryCount(fileHeaders.size.toLong())
                                 val headers = fileHeaders.filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
                                 if (pageIndex in headers.indices) {
-                                    archive.getInputStream(headers[pageIndex]).use { return@withLock decodeImageStream(it, width, height) }
+                                    archive.getInputStream(headers[pageIndex]).use {
+                                        return@withLock decodeImageStream(limitedPageStream(it), width, height)
+                                    }
                                 }
                             }
                         }
@@ -675,13 +708,18 @@ class LocalArchivePageLoader(
         }
     }
 
+    private fun limitedPageStream(input: java.io.InputStream): java.io.InputStream {
+        return ArchiveResourceLimits.limitedInputStream(input, ArchiveResourceLimits.MAX_PAGE_BYTES)
+    }
+
     private fun applyBitmapReuse(options: BitmapFactory.Options, targetW: Int, targetH: Int) {
-        val requiredBytes = targetW * targetH * (if (options.inPreferredConfig == Bitmap.Config.RGB_565) 2 else 4)
+        val requiredBytes = targetW.toLong() * targetH.toLong() *
+            (if (options.inPreferredConfig == Bitmap.Config.RGB_565) 2L else 4L)
         synchronized(bitmapPool) {
             val it = bitmapPool.iterator()
             while (it.hasNext()) {
                 val b = it.next()
-                if (!b.isRecycled && b.isMutable && b.allocationByteCount >= requiredBytes) {
+                if (!b.isRecycled && b.isMutable && b.allocationByteCount.toLong() >= requiredBytes) {
                     options.inBitmap = b
                     it.remove()
                     break
@@ -819,10 +857,11 @@ class LocalArchivePageLoader(
         val targetH = options.outHeight / sampleSize
         synchronized(bitmapPool) {
             val it = bitmapPool.iterator()
-            val requiredBytes = targetW * targetH * (if (options.inPreferredConfig == Bitmap.Config.RGB_565) 2 else 4)
+            val requiredBytes = targetW.toLong() * targetH.toLong() *
+                (if (options.inPreferredConfig == Bitmap.Config.RGB_565) 2L else 4L)
             while (it.hasNext()) {
                 val b = it.next()
-                if (!b.isRecycled && b.isMutable && b.allocationByteCount >= requiredBytes) {
+                if (!b.isRecycled && b.isMutable && b.allocationByteCount.toLong() >= requiredBytes) {
                     options.inBitmap = b
                     it.remove()
                     break

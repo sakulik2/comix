@@ -23,6 +23,11 @@ class ComicApplication : Application() {
         // [存储瘦身自愈] 每次重启 App 时清理运行期临时解压产生的图片缓存
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                SettingsDataStore.migrateLegacyCredentials(this@ComicApplication)
+            } catch (e: Exception) {
+                android.util.Log.e("ComicApplication", "迁移加密凭据失败", e)
+            }
+            try {
                 // 1 精确清理特定的临时缓存目录与文件（避免全量清理整个 cacheDir 导致系统或其他库的缓存失效）
                 cacheDir.listFiles { _, name ->
                     name.startsWith("session_") ||

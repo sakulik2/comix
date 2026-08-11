@@ -20,6 +20,8 @@ import xyz.sakulik.comic.model.db.ComicRegion
 import xyz.sakulik.comic.model.db.ComicSource
 import xyz.sakulik.comic.model.network.ComicApiService
 import xyz.sakulik.comic.model.network.RetrofitClient
+import xyz.sakulik.comic.model.loader.RemoteCacheManager
+import xyz.sakulik.comic.model.loader.RemoteResourceLimits
 import xyz.sakulik.comic.model.metadata.FilenameCleaner
 import xyz.sakulik.comic.model.metadata.MetadataRepository
 import xyz.sakulik.comic.model.metadata.ScrapeStrategy
@@ -94,14 +96,15 @@ class BookshelfViewModel(
     val remoteEnabled = SettingsDataStore.getRemoteEnabledFlow(application)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
-    // 服务器是否可达状态 (运行时检测)
-    private val _isServerReachable = MutableStateFlow(true)
+    // 服务器是否可达状态；冷启动与检测期间默认不可见，成功后再显示远程漫画
+    private val _isServerReachable = MutableStateFlow(false)
     val isServerReachable = _isServerReachable.asStateFlow()
+    private var serverConnectivityJob: kotlinx.coroutines.Job? = null
 
     // 决定远程漫画是否实际可见（结合设置开关与服务器连通性）
     val remoteVisible = combine(remoteEnabled, isServerReachable) { enabled, reachable ->
         enabled && reachable
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     // 元数据启用状态开关
     val metadataEnabled = SettingsDataStore.getMetadataEnabledFlow(application)
@@ -196,7 +199,11 @@ class BookshelfViewModel(
         }
         // 启动后台自动清理过期的远程漫画本地 L2 缓存 (LRU 算法，限制总大小不超过 500MB)
         viewModelScope.launch(Dispatchers.IO) {
-            autoCleanRemoteCache()
+            try {
+                RemoteCacheManager.trim(application)
+            } catch (e: Exception) {
+                Log.e("BookshelfVM", "自动清理远程缓存异常", e)
+            }
         }
         // 监控远程配置变更（Base URL 与 Token），实时/冷启动时触发连通性校验以刷新可见性状态
         viewModelScope.launch {
@@ -344,11 +351,12 @@ class BookshelfViewModel(
      * 主动检测 Comix 远程服务器的连通性并更新可见状态
      */
     fun checkServerConnectivity() {
-        viewModelScope.launch {
+        _isServerReachable.value = false
+        serverConnectivityJob?.cancel()
+        serverConnectivityJob = viewModelScope.launch {
             val context = getApplication<Application>()
             val baseUrl = SettingsDataStore.getComicApiBaseUrlFlow(context).firstOrNull()
             if (baseUrl.isNullOrBlank()) {
-                _isServerReachable.value = false
                 return@launch
             }
             withContext(Dispatchers.IO) {
@@ -365,6 +373,7 @@ class BookshelfViewModel(
                     _isServerReachable.value = true
                     Log.d("BookshelfVM", "主动校验服务器连通成功: $baseUrl, 远程漫画已显示。")
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     Log.e("BookshelfVM", "主动校验服务器连通失败: $baseUrl, 已隐藏远程漫画: ${e.message}")
                     _isServerReachable.value = false
                 }
@@ -490,6 +499,31 @@ class BookshelfViewModel(
                 )
 
                 val remoteComics = apiService.getComics()
+                if (remoteComics.size > RemoteResourceLimits.MAX_LIBRARY_ITEMS) {
+                    throw IllegalStateException(
+                        "远程书架条目过多: ${remoteComics.size}（最多 ${RemoteResourceLimits.MAX_LIBRARY_ITEMS} 本）"
+                    )
+                }
+                val remoteIds = mutableSetOf<String>()
+                val safeRemoteComics = remoteComics.mapNotNull { item ->
+                    val safeId = try {
+                        RemoteResourceLimits.validateComicId(item.id)
+                    } catch (e: Exception) {
+                        Log.w("BookshelfSync", "忽略非法远程漫画 ID", e)
+                        return@mapNotNull null
+                    }
+                    val safePageCount = try {
+                        RemoteResourceLimits.validatePageCount(
+                            item.totalPages,
+                            allowZero = !item.isReady
+                        )
+                    } catch (e: Exception) {
+                        Log.w("BookshelfSync", "忽略页数异常的远程漫画: $safeId", e)
+                        return@mapNotNull null
+                    }
+                    remoteIds += safeId
+                    item.copy(id = safeId, totalPages = safePageCount)
+                }
                 Log.d("BookshelfSync", "获取到 ${remoteComics.size} 本远程漫画")
                 
                 withContext(Dispatchers.IO) {
@@ -499,7 +533,6 @@ class BookshelfViewModel(
                     val localRemoteComics = allLocalComics.filter {
                         it.source == ComicSource.REMOTE && (it.uri?.startsWith(normalizedBaseUrl) == true)
                     }
-                    val remoteIds = remoteComics.map { it.id }.toSet()
                     val toDelete = localRemoteComics.filter { it.location !in remoteIds }
                     
                     toDelete.forEach { comic ->
@@ -515,7 +548,7 @@ class BookshelfViewModel(
                     }
 
                     // --- 插入或更新其余漫画 ---
-                    remoteComics.forEach { item ->
+                    safeRemoteComics.forEach { item ->
                         val existing = dao.getComicByLocation(item.id)
                         
                         // 统一封面处理：拼接完整 URL
@@ -697,52 +730,6 @@ class BookshelfViewModel(
         }
     }
 
-    /**
-     * 自动清理过期的远程漫画本地 L2 缓存 (LRU 算法)
-     * 限制总大小不超过 500MB，超出时自动按最后访问时间排序，淘汰最久未看的漫画缓存
-     */
-    private fun autoCleanRemoteCache(maxSizeBytes: Long = 500 * 1024 * 1024L) {
-        try {
-            val remoteCacheDir = java.io.File(getApplication<Application>().cacheDir, "remote_l2")
-            if (!remoteCacheDir.exists() || !remoteCacheDir.isDirectory) return
-
-            val comicDirs = remoteCacheDir.listFiles()?.filter { it.isDirectory } ?: return
-            if (comicDirs.isEmpty()) return
-
-            var totalSize = 0L
-            val dirInfos = comicDirs.map { dir ->
-                val size = getDirectorySize(dir)
-                totalSize += size
-                DirInfo(dir, dir.lastModified(), size)
-            }
-
-            if (totalSize > maxSizeBytes) {
-                val sortedDirs = dirInfos.sortedBy { it.lastModified }
-                var currentSize = totalSize
-                for (info in sortedDirs) {
-                    info.dir.deleteRecursively()
-                    currentSize -= info.size
-                    Log.d("BookshelfVM", "自动清理过期远程缓存: ${info.dir.name}, 释放了 ${info.size / 1024 / 1024}MB")
-                    if (currentSize <= maxSizeBytes) {
-                        break
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("BookshelfVM", "自动清理远程缓存异常:", e)
-        }
-    }
-
-    private fun getDirectorySize(directory: java.io.File): Long {
-        var size = 0L
-        val files = directory.listFiles() ?: return 0L
-        for (file in files) {
-            size += if (file.isDirectory) getDirectorySize(file) else file.length()
-        }
-        return size
-    }
-
-    private data class DirInfo(val dir: java.io.File, val lastModified: Long, val size: Long)
 }
 
 // 辅助数据结构

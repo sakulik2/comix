@@ -22,8 +22,15 @@ object ImageEnhanceEngine {
         val height = src.height
         val config = if (src.config == Bitmap.Config.RGB_565) Bitmap.Config.RGB_565 else Bitmap.Config.ARGB_8888
         
-        // 从池中获取或创建目标位图
-        val dest = reuseBitmap(width, height, config)
+        val requiredBytes = width.toLong() * height.toLong() *
+            (if (config == Bitmap.Config.RGB_565) 2L else 4L)
+        var dest = reuseBitmap(width, height, config)
+        if (!dest.isMutable || dest.allocationByteCount.toLong() < requiredBytes) {
+            if (!dest.isRecycled) dest.recycle()
+            dest = Bitmap.createBitmap(width, height, config)
+        } else if (dest.width != width || dest.height != height || dest.config != config) {
+            dest.reconfigure(width, height, config)
+        }
         val canvas = Canvas(dest)
         
         // 1. 设置对比度增强矩阵

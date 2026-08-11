@@ -53,10 +53,12 @@ class ComicPageLoaderFactory(private val context: Context) {
                 if (baseUrl.isNullOrBlank()) {
                     throw IllegalStateException("未配置远程服务器 API 地址")
                 }
+                val safeComicId = RemoteResourceLimits.validateComicId(comic.location)
+                val safeTotalPages = RemoteResourceLimits.validatePageCount(comic.totalPages)
                 RemoteStreamPageLoader(
                     context = context,
-                    comicId = comic.location,
-                    totalPages = comic.totalPages,
+                    comicId = safeComicId,
+                    totalPages = safeTotalPages,
                     baseUrl = baseUrl
                 )
             }

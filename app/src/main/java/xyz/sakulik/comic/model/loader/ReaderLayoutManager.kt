@@ -1,12 +1,7 @@
 package xyz.sakulik.comic.model.loader
 
-import android.content.Context
-import android.graphics.BitmapFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import xyz.sakulik.comic.viewmodel.ReaderMode
 
 /**
@@ -34,30 +29,36 @@ class ReaderLayoutManager(
     private val loader: ComicPageLoader
 ) {
     private var layoutBlocks: List<RenderBlock> = emptyList()
-    private var pageToBlockMap: Map<Int, Int> = emptyMap()
+    private var pageToBlockMap: IntArray? = null
+    private var usesIdentityMapping = false
 
     /**
      * 计算并生成布局
      * 仅在 DUAL_PAGE 模式下需要调用
      */
     suspend fun computeLayout(pageCount: Int, readerMode: ReaderMode) = withContext(Dispatchers.IO) {
+        if (pageCount !in 0..RemoteResourceLimits.MAX_TOTAL_PAGES) {
+            throw IllegalArgumentException(
+                "漫画页数超出限制: $pageCount（最多 ${RemoteResourceLimits.MAX_TOTAL_PAGES} 页）"
+            )
+        }
+
         if (readerMode != ReaderMode.DUAL_PAGE) {
-            // 非双页模式：1:1 映射
-            val blocks = (0 until pageCount).map { RenderBlock.Single(it, false) }
-            layoutBlocks = blocks
-            pageToBlockMap = (0 until pageCount).associateWith { it }
+            layoutBlocks = object : AbstractList<RenderBlock>() {
+                override val size: Int = pageCount
+
+                override fun get(index: Int): RenderBlock {
+                    if (index !in 0 until size) throw IndexOutOfBoundsException("Page index: $index")
+                    return RenderBlock.Single(index, false)
+                }
+            }
+            pageToBlockMap = null
+            usesIdentityMapping = true
             return@withContext
         }
 
-        // [核心性能优化] 使用协程并行获取所有页面的尺寸，代替串行 loop 阻塞 I/O
-        val dimensionResults = coroutineScope {
-            (1 until pageCount).map { index: Int ->
-                async { index to getPageDimensions(index) }
-            }.awaitAll().toMap()
-        }
-
-        val blocks = mutableListOf<RenderBlock>()
-        val originalToIndex = mutableMapOf<Int, Int>()
+        val blocks = ArrayList<RenderBlock>((pageCount + 1) / 2)
+        val originalToIndex = IntArray(pageCount)
         
         // [用户需求] 强制第 0 页（封面）单页读取并显示
         if (pageCount > 0) {
@@ -67,7 +68,7 @@ class ReaderLayoutManager(
 
         var i = 1
         while (i < pageCount) {
-            val currentDim = dimensionResults[i] ?: PageSize(1000, 1400)
+            val currentDim = getPageDimensions(i)
             val currentIsSpread = currentDim.isLandscape()
 
             if (currentIsSpread) {
@@ -78,7 +79,7 @@ class ReaderLayoutManager(
             } else {
                 // 当前是窄图，尝试检查下一页
                 if (i + 1 < pageCount) {
-                    val nextDim = dimensionResults[i + 1] ?: PageSize(1000, 1400)
+                    val nextDim = getPageDimensions(i + 1)
                     if (nextDim.isLandscape()) {
                         // 下一页是宽图，当前页只能单走
                         originalToIndex[i] = blocks.size
@@ -102,6 +103,7 @@ class ReaderLayoutManager(
         
         layoutBlocks = blocks
         pageToBlockMap = originalToIndex
+        usesIdentityMapping = false
     }
 
     fun getBlocks(): List<RenderBlock> = layoutBlocks
@@ -112,7 +114,10 @@ class ReaderLayoutManager(
      * 根据原始页码获取 Pager 索引
      */
     fun getBlockIndexForPage(pageIndex: Int): Int {
-        return pageToBlockMap[pageIndex] ?: 0
+        if (usesIdentityMapping) {
+            return pageIndex.takeIf { it in layoutBlocks.indices } ?: 0
+        }
+        return pageToBlockMap?.getOrNull(pageIndex) ?: 0
     }
 
     /**

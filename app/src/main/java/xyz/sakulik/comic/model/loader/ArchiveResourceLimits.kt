@@ -74,3 +74,5 @@ object ArchiveResourceLimits {
 }
 
 class ArchiveLimitExceededException(message: String) : IOException(message)
+
+class ArchiveRandomAccessRequiredException(message: String) : IOException(message)

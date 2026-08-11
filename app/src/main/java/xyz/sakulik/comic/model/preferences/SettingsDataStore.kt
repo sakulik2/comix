@@ -7,8 +7,11 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import xyz.sakulik.comic.model.network.ComixEndpointPolicy
 
 // 定义对 Context 的扩展属性，使其作为顶层对象保证单例特性
@@ -32,16 +35,19 @@ object SettingsDataStore {
      */
     fun getComicVineApiKeyFlow(context: Context): Flow<String?> {
         return context.dataStore.data.map { preferences ->
-            preferences[COMIC_VINE_API_KEY]
-        }
+            CredentialCipher.decrypt(preferences[COMIC_VINE_API_KEY])
+        }.flowOn(Dispatchers.IO)
     }
 
     /**
      * 协程安全地保存新 API Key
      */
     suspend fun saveComicVineApiKey(context: Context, apiKey: String) {
+        val encryptedApiKey = withContext(Dispatchers.IO) {
+            CredentialCipher.encrypt(apiKey.trim())
+        }
         context.dataStore.edit { preferences ->
-            preferences[COMIC_VINE_API_KEY] = apiKey.trim()
+            preferences[COMIC_VINE_API_KEY] = encryptedApiKey
         }
     }
 
@@ -69,16 +75,32 @@ object SettingsDataStore {
      */
     fun getComicApiTokenFlow(context: Context): Flow<String?> {
         return context.dataStore.data.map { preferences ->
-            preferences[COMIC_API_TOKEN]
-        }
+            CredentialCipher.decrypt(preferences[COMIC_API_TOKEN])
+        }.flowOn(Dispatchers.IO)
     }
 
     /**
      * 保存云端服务器 API Token
      */
     suspend fun saveComicApiToken(context: Context, token: String) {
+        val encryptedToken = withContext(Dispatchers.IO) {
+            CredentialCipher.encrypt(token.trim())
+        }
         context.dataStore.edit { preferences ->
-            preferences[COMIC_API_TOKEN] = token.trim()
+            preferences[COMIC_API_TOKEN] = encryptedToken
+        }
+    }
+
+    suspend fun migrateLegacyCredentials(context: Context) {
+        context.dataStore.edit { preferences ->
+            val comicVineKey = preferences[COMIC_VINE_API_KEY]
+            if (CredentialCipher.isLegacyPlaintext(comicVineKey)) {
+                preferences[COMIC_VINE_API_KEY] = CredentialCipher.encrypt(comicVineKey.orEmpty())
+            }
+            val comicApiToken = preferences[COMIC_API_TOKEN]
+            if (CredentialCipher.isLegacyPlaintext(comicApiToken)) {
+                preferences[COMIC_API_TOKEN] = CredentialCipher.encrypt(comicApiToken.orEmpty())
+            }
         }
     }
 

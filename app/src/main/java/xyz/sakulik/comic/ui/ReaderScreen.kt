@@ -101,12 +101,15 @@ fun ReaderScreen(
     }
 
     // 页码断存
+    val validInitialPage = initialPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
     val savedPage = androidx.compose.runtime.saveable.rememberSaveable(
         saver = androidx.compose.runtime.saveable.Saver(
             save = { it.intValue },
-            restore = { mutableIntStateOf(it) }
+            restore = {
+                mutableIntStateOf(it.coerceIn(0, (pageCount - 1).coerceAtLeast(0)))
+            }
         )
-    ) { mutableIntStateOf(initialPage) }
+    ) { mutableIntStateOf(validInitialPage) }
 
     val pagerPageCount = if (isLayoutReady) layoutManager.getBlockCount() else 0
 

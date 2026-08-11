@@ -24,13 +24,21 @@ import xyz.sakulik.comic.model.loader.ComicPageLoaderFactory
 import xyz.sakulik.comic.model.loader.LocalArchivePageLoader
 import xyz.sakulik.comic.model.loader.LocalPdfPageLoader
 import xyz.sakulik.comic.model.loader.RemoteStreamPageLoader
+import xyz.sakulik.comic.model.loader.RemoteResourceLimitException
+import xyz.sakulik.comic.model.loader.RemoteResourceLimits
 import xyz.sakulik.comic.navigation.ReaderRoute
 import java.io.File
 import androidx.navigation.toRoute
-enum class ReaderMode {
-    PAGER,      // 传统单页翻页
-    DUAL_PAGE,   // 横屏双页模式
-    WEBTOON     // 纵向卷轴条漫
+enum class ReaderMode(val storageId: String) {
+    PAGER("pager"),
+    DUAL_PAGE("dual_page"),
+    WEBTOON("webtoon");
+
+    companion object {
+        fun fromStorageId(storageId: String?): ReaderMode? {
+            return entries.firstOrNull { it.storageId == storageId }
+        }
+    }
 }
 
 class ReaderViewModel(
@@ -95,7 +103,7 @@ class ReaderViewModel(
             ReaderMode.DUAL_PAGE -> ReaderMode.PAGER
         }
         // 核心单本记忆：以漫画 ID 为唯一标识，持久化存储当前漫画的阅读布局偏好
-        prefs.edit().putInt("reader_mode_$cid", _readerMode.value.ordinal).apply()
+        prefs.edit().putString("reader_mode_$cid", _readerMode.value.storageId).apply()
     }
     fun setImmersive(immersive: Boolean) { _isImmersive.value = immersive }
 
@@ -129,9 +137,18 @@ class ReaderViewModel(
             _isVolumeKeyEnabled.value = prefs.getBoolean("vol_paging_$cid", false)
             xyz.sakulik.comic.utils.VolumeKeyHandler.isEnabled = _isVolumeKeyEnabled.value
             
-            val savedMode = prefs.getInt("reader_mode_$cid", -1)
-            if (savedMode != -1) {
-                _readerMode.value = ReaderMode.values()[savedMode]
+            val readerModeKey = "reader_mode_$cid"
+            when (val savedMode = prefs.all[readerModeKey]) {
+                is String -> {
+                    _readerMode.value = ReaderMode.fromStorageId(savedMode) ?: ReaderMode.PAGER
+                }
+                is Int -> {
+                    _readerMode.value = ReaderMode.entries.getOrNull(savedMode) ?: ReaderMode.PAGER
+                    prefs.edit().putString(readerModeKey, _readerMode.value.storageId).apply()
+                }
+                else -> {
+                    _readerMode.value = ReaderMode.PAGER
+                }
             }
 
             _state.value = ComicState.Loading
@@ -158,19 +175,29 @@ class ReaderViewModel(
                     var isReady = false
                     var remotePages = 0
                     var retryCount = 0
+                    val safeComicId = RemoteResourceLimits.validateComicId(entity.location)
                     
                     // 循环检测服务器是否解压完成，最多尝试 15 次（每次间隔 2 秒，共 30 秒）
                     while (!isReady && retryCount < 15) {
                         try {
-                            val detail = apiService.getComicDetail(entity.location)
+                            val detail = apiService.getComicDetail(safeComicId)
+                            RemoteResourceLimits.validateComicId(detail.id)
+                            if (detail.id != safeComicId) {
+                                throw RemoteResourceLimitException("远程漫画详情 ID 与请求不一致")
+                            }
                             isReady = detail.isReady
-                            remotePages = detail.totalPages
+                            remotePages = RemoteResourceLimits.validatePageCount(
+                                detail.totalPages,
+                                allowZero = !isReady
+                            )
                             if (!isReady) {
                                 _state.value = ComicState.Loading // 保持加载状态
                                 Log.d("ReaderViewModel", "云端正在解压中，第 ${retryCount + 1} 次轮询重试...")
                                 kotlinx.coroutines.delay(2000)
                                 retryCount++
                             }
+                        } catch (e: RemoteResourceLimitException) {
+                            throw e
                         } catch (e: Exception) {
                             Log.e("ReaderViewModel", "云端详情请求异常:", e)
                             kotlinx.coroutines.delay(2000)
@@ -206,11 +233,16 @@ class ReaderViewModel(
                 
                 val pageCount = loader.getPageCount()
                 if (pageCount == 0) throw IllegalStateException("无法加载漫画页面，文件可能已损坏或暂不支持该格式")
+                if (pageCount > RemoteResourceLimits.MAX_TOTAL_PAGES) {
+                    throw IllegalStateException(
+                        "漫画页数超出限制: $pageCount（最多 ${RemoteResourceLimits.MAX_TOTAL_PAGES} 页）"
+                    )
+                }
 
                 _state.value = ComicState.Ready(pageCount, entity.title, ext, uri, loader)
                 
                 // 即入置顶策略：只要成功打开漫画，就立即更新最后阅读时间
-                updateProgress(entity.currentPage, pageCount)
+                updateProgress(entity.currentPage.coerceIn(0, pageCount - 1), pageCount)
             } catch (e: Exception) {
                 e.printStackTrace()
                 val message = when {

@@ -1,13 +1,13 @@
 package xyz.sakulik.comic.model.metadata
 
 import android.content.Context
-import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import xyz.sakulik.comic.model.db.AppDatabase
 import xyz.sakulik.comic.model.db.ComicEntity
 import xyz.sakulik.comic.model.db.ComicFormat
+import xyz.sakulik.comic.model.loader.ArchiveResourceLimits
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
@@ -154,6 +154,7 @@ object MetadataScraper {
     }
 
     private suspend fun downloadCover(context: Context, url: String): String? {
+        var pendingFile: File? = null
         return try {
             val request = Request.Builder()
                 .url(url)
@@ -161,22 +162,35 @@ object MetadataScraper {
                 .build()
             client.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
-                    response.body?.byteStream()?.use { stream ->
+                    val responseBody = response.body ?: return null
+                    val contentLength = responseBody.contentLength()
+                    if (contentLength > ArchiveResourceLimits.MAX_COVER_SOURCE_BYTES) return null
+                    responseBody.byteStream().use { stream ->
                         // [核心改进] 内存直通解码：不通过 ByteArray 缓冲，直接从网络流解码位图
                         // 注意：如果需要存盘，必须先存盘再解码，或者通过 BufferedInputStream 标记位重读
                         // 这里我们采用先存盘再解码的策略，因为物理存盘是必要的
                         val file = File(context.filesDir, "covers/${UUID.randomUUID()}.webp")
+                        pendingFile = file
                         file.parentFile?.mkdirs()
                         
                         FileOutputStream(file).use { out ->
-                            stream.copyTo(out)
+                            ArchiveResourceLimits.copyWithLimit(
+                                stream,
+                                out,
+                                ArchiveResourceLimits.MAX_COVER_SOURCE_BYTES
+                            )
                         }
                         
                         if (file.exists()) {
-                            val options = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
-                            val bitmap = BitmapFactory.decodeFile(file.absolutePath, options)
-                            if (bitmap != null) {
-                                bitmap.recycle() // 我们只需要验证下载成功并存盘，MetadataScraper 主要目的是存盘
+                            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            BitmapFactory.decodeFile(file.absolutePath, options)
+                            val pixelCount = options.outWidth.toLong() * options.outHeight.toLong()
+                            if (
+                                options.outWidth in 1..ArchiveResourceLimits.MAX_IMAGE_DIMENSION &&
+                                options.outHeight in 1..ArchiveResourceLimits.MAX_IMAGE_DIMENSION &&
+                                pixelCount in 1..ArchiveResourceLimits.MAX_DECODED_COVER_PIXELS
+                            ) {
+                                pendingFile = null
                                 return file.absolutePath
                             }
                         }
@@ -187,6 +201,8 @@ object MetadataScraper {
         } catch (e: Exception) {
             e.printStackTrace()
             null
+        } finally {
+            pendingFile?.delete()
         }
     }
 }
