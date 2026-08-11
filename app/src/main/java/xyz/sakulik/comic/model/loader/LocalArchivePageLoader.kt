@@ -120,6 +120,7 @@ class LocalArchivePageLoader(
                             val nioStream = SevenZipNioStream(channel)
                             val archive = SevenZip.openInArchive(null, nioStream)
                             activeSevenZipArchive = archive
+                            ArchiveResourceLimits.requireEntryCount(archive.numberOfItems.toLong())
                             
                             val list = mutableListOf<SevenZipMeta>()
                             for (i in 0 until archive.numberOfItems) {
@@ -141,7 +142,9 @@ class LocalArchivePageLoader(
                             val volumeManager = RarVolumeManager(nioChannel)
                             val archive = Archive(volumeManager, null, null)
                             activeRarArchive = archive
-                            activeSortedHeaders = archive.getFileHeaders()
+                            val fileHeaders = archive.getFileHeaders()
+                            ArchiveResourceLimits.requireEntryCount(fileHeaders.size.toLong())
+                            activeSortedHeaders = fileHeaders
                                 .filter { !it.isDirectory && isImage(it.fileName ?: "") }
                                 .sortedBy { it.fileName }
                         } catch (e: Exception) {
@@ -196,7 +199,7 @@ class LocalArchivePageLoader(
             if (file.exists()) {
                 val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeFile(file.absolutePath, opts)
-                if (opts.outWidth > 0) {
+                if (isImageSizeAllowed(opts.outWidth, opts.outHeight)) {
                     val res = opts.outWidth to opts.outHeight
                     pageDimensionsCache[pageIndex] = res
                     return@withContext res
@@ -230,7 +233,7 @@ class LocalArchivePageLoader(
         stream?.use { 
             val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeStream(it, null, opts)
-            if (opts.outWidth > 0) {
+            if (isImageSizeAllowed(opts.outWidth, opts.outHeight)) {
                 val res = opts.outWidth to opts.outHeight
                 pageDimensionsCache[pageIndex] = res
                 return@withContext res
@@ -283,10 +286,11 @@ class LocalArchivePageLoader(
             mirrorMutex.withLock {
                 if (isMirrorReady || isStreamingOnly) return@withLock sessionMirror
                 
+                var pendingMirror: File? = null
                 try {
                     val fileSize = getUriSize(uri)
                     val available = getAvailableSpace()
-                    val HUGE_FILE_THRESHOLD = 650L * 1024 * 1024 // 650MB 作为强制流式模式的分水岭
+                    val HUGE_FILE_THRESHOLD = ArchiveResourceLimits.MAX_MIRROR_BYTES
                     if (fileSize > HUGE_FILE_THRESHOLD || available < fileSize + 500 * 1024 * 1024) {
                         isStreamingOnly = true
                         android.util.Log.i("ArchiveLoader", "Storage pressure or large file ($fileSize bytes), skipping mirror.")
@@ -295,9 +299,16 @@ class LocalArchivePageLoader(
 
                     val start = System.currentTimeMillis()
                     val tempFile = File(sessionDir, "mirror_${System.currentTimeMillis()}.tmp")
-                    context.contentResolver.openInputStream(uri)?.use { input ->
+                    pendingMirror = tempFile
+                    val sourceStream = context.contentResolver.openInputStream(uri)
+                        ?: throw java.io.FileNotFoundException("无法打开漫画文件")
+                    sourceStream.use { input ->
                         tempFile.outputStream().use { out ->
-                            input.copyTo(out)
+                            ArchiveResourceLimits.copyWithLimit(
+                                input,
+                                out,
+                                ArchiveResourceLimits.MAX_MIRROR_BYTES
+                            )
                         }
                     }
                     sessionMirror = tempFile
@@ -305,6 +316,7 @@ class LocalArchivePageLoader(
                     android.util.Log.d("ArchiveLoader", "Mirror created in ${System.currentTimeMillis() - start}ms: ${tempFile.length()} bytes")
                     tempFile
                 } catch (e: Exception) {
+                    pendingMirror?.delete()
                     if (e.message?.contains("ENOSPC") == true) {
                         isStreamingOnly = true
                         android.util.Log.w("ArchiveLoader", "ENOSPC detected during mirroring, switching to streaming mode.")
@@ -371,7 +383,10 @@ class LocalArchivePageLoader(
                             "cbz", "zip" -> {
                                 ZipInputStream(input).use { zis ->
                                     var entry = zis.nextEntry
+                                    var entryCount = 0L
                                     while (entry != null) {
+                                        entryCount++
+                                        ArchiveResourceLimits.requireEntryCount(entryCount)
                                         if (!entry.isDirectory && isImage(entry.name)) names.add(entry.name)
                                         zis.closeEntry()
                                         entry = zis.nextEntry
@@ -381,7 +396,9 @@ class LocalArchivePageLoader(
                             "cbr", "rar" -> {
                                 try {
                                     Archive(input).use { archive ->
-                                        archive.getFileHeaders().forEach { header ->
+                                        val fileHeaders = archive.getFileHeaders()
+                                        ArchiveResourceLimits.requireEntryCount(fileHeaders.size.toLong())
+                                        fileHeaders.forEach { header ->
                                             if (!header.isDirectory && isImage(header.fileName ?: "")) names.add(header.fileName)
                                         }
                                     }
@@ -405,6 +422,7 @@ class LocalArchivePageLoader(
                 when (extension.lowercase()) {
                     "cbz", "zip" -> {
                         java.util.zip.ZipFile(archiveFile).use { zipFile ->
+                            ArchiveResourceLimits.requireEntryCount(zipFile.size().toLong())
                             zipFile.entries().asSequence().forEach { entry ->
                                 if (!entry.isDirectory && isImage(entry.name)) names.add(entry.name)
                             }
@@ -413,7 +431,9 @@ class LocalArchivePageLoader(
                     "cbr", "rar" -> {
                         try {
                             Archive(archiveFile).use { archive ->
-                                archive.getFileHeaders().forEach { header ->
+                                val fileHeaders = archive.getFileHeaders()
+                                ArchiveResourceLimits.requireEntryCount(fileHeaders.size.toLong())
+                                fileHeaders.forEach { header ->
                                     if (!header.isDirectory && isImage(header.fileName ?: "")) names.add(header.fileName)
                                 }
                             }
@@ -421,6 +441,7 @@ class LocalArchivePageLoader(
                             if (e is com.github.junrar.exception.UnsupportedRarV5Exception || e.message?.contains("V5") == true) {
                                 val inStream = SevenZipNioStream(java.io.RandomAccessFile(archiveFile, "r").channel)
                                 SevenZip.openInArchive(null, inStream).use { szArchive ->
+                                    ArchiveResourceLimits.requireEntryCount(szArchive.numberOfItems.toLong())
                                     for (i in 0 until szArchive.numberOfItems) {
                                         val path = szArchive.getProperty(i, PropID.PATH) as? String ?: continue
                                         val isFolder = szArchive.getProperty(i, PropID.IS_FOLDER) as? Boolean ?: false
@@ -523,6 +544,7 @@ class LocalArchivePageLoader(
                     when (extension.lowercase()) {
                         "cbz", "zip" -> {
                             java.util.zip.ZipFile(mirror).use { zip ->
+                                ArchiveResourceLimits.requireEntryCount(zip.size().toLong())
                                 val entries = zip.entries().asSequence().filter { !it.isDirectory && isImage(it.name) }.sortedBy { it.name }.toList()
                                 if (pageIndex in entries.indices) {
                                     zip.getInputStream(entries[pageIndex]).use { decodeImageStream(it, width, height) }
@@ -531,7 +553,9 @@ class LocalArchivePageLoader(
                         }
                         "cbr", "rar" -> {
                             Archive(mirror).use { archive ->
-                                val headers = archive.getFileHeaders().filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
+                                val fileHeaders = archive.getFileHeaders()
+                                ArchiveResourceLimits.requireEntryCount(fileHeaders.size.toLong())
+                                val headers = fileHeaders.filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
                                 if (pageIndex in headers.indices) {
                                     archive.getInputStream(headers[pageIndex]).use { decodeImageStream(it, width, height) }
                                 } else null
@@ -552,7 +576,10 @@ class LocalArchivePageLoader(
                             val zis = ZipInputStream(input)
                             var entry = zis.nextEntry
                             var idx = 0
+                            var entryCount = 0L
                             while (entry != null) {
+                                entryCount++
+                                ArchiveResourceLimits.requireEntryCount(entryCount)
                                 if (!entry.isDirectory && isImage(entry.name)) {
                                     if (idx == pageIndex) return@withLock decodeImageStream(zis, width, height)
                                     idx++
@@ -563,7 +590,9 @@ class LocalArchivePageLoader(
                         }
                         "cbr", "rar" -> {
                             Archive(input).use { archive ->
-                                val headers = archive.getFileHeaders().filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
+                                val fileHeaders = archive.getFileHeaders()
+                                ArchiveResourceLimits.requireEntryCount(fileHeaders.size.toLong())
+                                val headers = fileHeaders.filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
                                 if (pageIndex in headers.indices) {
                                     archive.getInputStream(headers[pageIndex]).use { return@withLock decodeImageStream(it, width, height) }
                                 }
@@ -589,6 +618,10 @@ class LocalArchivePageLoader(
             
             if (options.outWidth <= 0 || options.outHeight <= 0) {
                 android.util.Log.e("ArchiveLoader", "Failed to decode image bounds (possibly unsupported format). Header size: ${options.outMimeType}")
+                return null
+            }
+            if (!isImageSizeAllowed(options.outWidth, options.outHeight)) {
+                android.util.Log.e("ArchiveLoader", "Image dimensions exceed safety limits: ${options.outWidth}x${options.outHeight}")
                 return null
             }
             
@@ -681,6 +714,7 @@ class LocalArchivePageLoader(
                         when (extension.lowercase()) {
                             "cbz", "zip" -> {
                                 java.util.zip.ZipFile(mirrorFile).use { zip ->
+                                    ArchiveResourceLimits.requireEntryCount(zip.size().toLong())
                                     val entriesList = zip.entries().asSequence().filter { !it.isDirectory && isImage(it.name) }.sortedBy { it.name }.toList()
                                     if (idx in entriesList.indices) {
                                         zip.getInputStream(entriesList[idx]).use { saveEntryToCache(it, idx) }
@@ -689,7 +723,9 @@ class LocalArchivePageLoader(
                             }
                             "cbr", "rar" -> {
                                 Archive(mirrorFile).use { archive ->
-                                    val hList = archive.getFileHeaders().filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
+                                    val fileHeaders = archive.getFileHeaders()
+                                    ArchiveResourceLimits.requireEntryCount(fileHeaders.size.toLong())
+                                    val hList = fileHeaders.filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
                                     if (idx in hList.indices) {
                                         archive.getInputStream(hList[idx]).use { imgIn -> saveEntryToCache(imgIn, idx) }
                                     }
@@ -736,7 +772,9 @@ class LocalArchivePageLoader(
         val file = File(sessionDir, "p_$index.tmp")
         val partFile = File(sessionDir, "p_$index.part")
         try {
-            partFile.outputStream().use { out -> input.copyTo(out) }
+            partFile.outputStream().use { out ->
+                ArchiveResourceLimits.copyWithLimit(input, out, ArchiveResourceLimits.MAX_PAGE_BYTES)
+            }
             if (partFile.renameTo(file)) {
                 extractedFiles[index] = file
             } else {
@@ -772,6 +810,7 @@ class LocalArchivePageLoader(
     private fun decodeImageFile(file: File, reqWidth: Int, reqHeight: Int): Bitmap? {
         val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, options)
+        if (!isImageSizeAllowed(options.outWidth, options.outHeight)) return null
         val sampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
         options.inSampleSize = sampleSize
         options.inJustDecodeBounds = false
@@ -833,6 +872,14 @@ class LocalArchivePageLoader(
                lower.endsWith(".png") || lower.endsWith(".webp")
     }
 
+    private fun isImageSizeAllowed(width: Int, height: Int): Boolean {
+        return width > 0 &&
+            height > 0 &&
+            width <= ArchiveResourceLimits.MAX_IMAGE_DIMENSION &&
+            height <= ArchiveResourceLimits.MAX_IMAGE_DIMENSION &&
+            width.toLong() * height.toLong() <= ArchiveResourceLimits.MAX_SOURCE_IMAGE_PIXELS
+    }
+
     override fun close() {
         sessionScope.cancel()
         closeActiveSession()
@@ -874,10 +921,15 @@ class LocalArchivePageLoader(
         try {
             val out = java.io.FileOutputStream(targetFile)
             out.use { fos ->
+                var written = 0L
                 archive.extract(intArrayOf(index), false, object : IArchiveExtractCallback {
                     override fun getStream(index: Int, askMode: ExtractAskMode?): ISequentialOutStream? {
                         if (askMode != ExtractAskMode.EXTRACT) return null
                         return ISequentialOutStream { data ->
+                            written += data.size
+                            if (written > ArchiveResourceLimits.MAX_PAGE_BYTES) {
+                                throw ArchiveLimitExceededException("页面解压后超过 96MB 限制")
+                            }
                             fos.write(data)
                             data.size
                         }
@@ -1132,10 +1184,21 @@ class LocalArchivePageLoader(
                 cdOffset = eocdBuf.getInt().toLong() and 0xFFFFFFFFL
             }
 
+            ArchiveResourceLimits.requireEntryCount(totalEntries)
+            if (cdSize < 0 || cdSize > ArchiveResourceLimits.MAX_CENTRAL_DIRECTORY_BYTES) {
+                throw ArchiveLimitExceededException("ZIP 中央目录超过 64MB 限制")
+            }
+            val archiveSize = channel.size()
+            if (cdOffset < 0 || cdOffset > archiveSize || cdSize > archiveSize - cdOffset) {
+                throw java.io.IOException("ZIP 中央目录偏移无效")
+            }
+
             // 3. 解析 Central Directory
             channel.position(cdOffset)
             val cdBuf = ByteBuffer.allocate(cdSize.toInt()).order(ByteOrder.LITTLE_ENDIAN)
-            channel.read(cdBuf)
+            while (cdBuf.hasRemaining()) {
+                if (channel.read(cdBuf) < 0) throw java.io.IOException("ZIP 中央目录不完整")
+            }
             cdBuf.flip()
 
             repeat(totalEntries.toInt()) {
@@ -1201,6 +1264,13 @@ class LocalArchivePageLoader(
                         p += 4 + dataSize
                     }
                     cdBuf.position(extraStart + extraLen)
+                }
+
+                if (localHeaderOffset < 0 || localHeaderOffset >= channel.size()) {
+                    throw java.io.IOException("ZIP 条目偏移无效: $name")
+                }
+                if (isImage(name) && (compSize < 0 || compSize > ArchiveResourceLimits.MAX_PAGE_BYTES)) {
+                    throw ArchiveLimitExceededException("ZIP 图片条目超过 96MB 限制: $name")
                 }
                 
                 entries[name] = ZipEntryMeta(localHeaderOffset, compSize)

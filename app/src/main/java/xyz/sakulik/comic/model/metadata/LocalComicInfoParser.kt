@@ -9,6 +9,7 @@ import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 import java.io.InputStream
 import java.util.zip.ZipInputStream
+import xyz.sakulik.comic.model.loader.ArchiveResourceLimits
 
 /**
  * 本地规范外挂元数据解析器
@@ -23,10 +24,18 @@ object LocalComicInfoParser {
         try {
             context.contentResolver.openInputStream(uri)?.use { stream ->
                 ZipInputStream(stream).use { zis ->
+                    var entryCount = 0L
                     while (true) {
                         val entry = zis.nextEntry ?: break
+                        entryCount++
+                        ArchiveResourceLimits.requireEntryCount(entryCount)
                         if (entry.name.equals("ComicInfo.xml", ignoreCase = true)) {
-                            return@withContext parseXml(zis)
+                            return@withContext parseXml(
+                                ArchiveResourceLimits.limitedInputStream(
+                                    zis,
+                                    ArchiveResourceLimits.MAX_METADATA_BYTES
+                                )
+                            )
                         }
                         zis.closeEntry()
                     }

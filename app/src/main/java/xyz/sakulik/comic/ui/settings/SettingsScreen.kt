@@ -17,6 +17,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import xyz.sakulik.comic.model.network.ComixEndpointPolicy
 import xyz.sakulik.comic.model.preferences.SettingsDataStore
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -118,13 +119,30 @@ fun SettingsScreen(
                                 singleLine = true,
                                 visualTransformation = PasswordVisualTransformation()
                             )
+                            Text(
+                                text = "公网地址必须使用 HTTPS；局域网 HTTP 可用，但 Token 仍会以明文传输。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 6.dp)
+                            )
                             Spacer(modifier = Modifier.height(16.dp))
                             Button(
                                 onClick = {
                                     scope.launch {
-                                        SettingsDataStore.saveComicApiBaseUrl(context, apiUrlInput)
-                                        SettingsDataStore.saveComicApiToken(context, apiTokenInput)
-                                        snackbarHostState.showSnackbar("✅ 云端配置已保存")
+                                        try {
+                                            val endpoint = ComixEndpointPolicy.parse(apiUrlInput)
+                                            apiUrlInput = endpoint.baseUrl.toString()
+                                            SettingsDataStore.saveComicApiBaseUrl(context, apiUrlInput)
+                                            SettingsDataStore.saveComicApiToken(context, apiTokenInput)
+                                            val message = if (endpoint.isCleartextLan && apiTokenInput.isNotBlank()) {
+                                                "⚠️ 配置已保存；局域网 HTTP 会明文传输 Token"
+                                            } else {
+                                                "✅ 云端配置已保存"
+                                            }
+                                            snackbarHostState.showSnackbar(message)
+                                        } catch (e: IllegalArgumentException) {
+                                            snackbarHostState.showSnackbar("❌ ${e.message}")
+                                        }
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth()
@@ -135,29 +153,38 @@ fun SettingsScreen(
                             OutlinedButton(
                                 onClick = {
                                     scope.launch {
-                                        var url = apiUrlInput.trim()
-                                        if (url.isEmpty()) {
+                                        if (apiUrlInput.isBlank()) {
                                             snackbarHostState.showSnackbar("❌ 请先输入 API Base URL")
                                             return@launch
                                         }
-                                        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-                                            url = "http://$url"
+                                        val endpoint = try {
+                                            ComixEndpointPolicy.parse(apiUrlInput)
+                                        } catch (e: IllegalArgumentException) {
+                                            snackbarHostState.showSnackbar("❌ ${e.message}")
+                                            return@launch
                                         }
-                                        val testUrl = if (url.endsWith("/")) "${url}api" else "$url/api"
+                                        val testUrl = endpoint.baseUrl.resolve("api")?.toString()
+                                        if (testUrl == null) {
+                                            snackbarHostState.showSnackbar("❌ 无法生成测试地址")
+                                            return@launch
+                                        }
                                         val token = apiTokenInput.trim()
 
                                         val status = withContext(Dispatchers.IO) {
+                                            var connection: HttpURLConnection? = null
                                             try {
-                                                val connection = URL(testUrl).openConnection() as HttpURLConnection
-                                                connection.requestMethod = "GET"
-                                                connection.connectTimeout = 3000
-                                                connection.readTimeout = 3000
+                                                val activeConnection = URL(testUrl).openConnection() as HttpURLConnection
+                                                connection = activeConnection
+                                                activeConnection.instanceFollowRedirects = false
+                                                activeConnection.requestMethod = "GET"
+                                                activeConnection.connectTimeout = 3000
+                                                activeConnection.readTimeout = 3000
                                                 if (token.isNotEmpty()) {
-                                                    connection.setRequestProperty("x-comix-token", token)
+                                                    activeConnection.setRequestProperty("x-comix-token", token)
                                                 }
-                                                val code = connection.responseCode
+                                                val code = activeConnection.responseCode
                                                 if (code == 200) {
-                                                    val text = connection.inputStream.bufferedReader().readText()
+                                                    val text = activeConnection.inputStream.bufferedReader().use { it.readText() }
                                                     if (text.contains("comix.js")) {
                                                         val version = text.substringAfter("apiVersion\":\"").substringBefore("\"")
                                                         "✅ 连接成功！服务端版本：$version"
@@ -171,6 +198,8 @@ fun SettingsScreen(
                                                 }
                                             } catch (e: java.lang.Exception) {
                                                 "❌ 无法连接到服务器: ${e.message}"
+                                            } finally {
+                                                connection?.disconnect()
                                             }
                                         }
                                         snackbarHostState.showSnackbar(status)

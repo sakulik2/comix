@@ -19,10 +19,14 @@ object RetrofitClient {
     @Volatile var cachedComixToken: String? = null
         private set
 
+    @Volatile var cachedComixBaseUrl: String? = null
+        private set
+
     @Volatile private var okHttpClient: OkHttpClient? = null
 
     /** 当任何一个 API 密钥更新时调用，同时使现有客户端失效以便下次重建 */
-    fun updateTokens(comicVineKey: String?, comixToken: String?) {
+    fun updateCredentials(comicVineKey: String?, comixToken: String?, comixBaseUrl: String?) {
+        cachedComixBaseUrl = comixBaseUrl?.takeIf { it.isNotBlank() }
         if (cachedComicVineKey != comicVineKey || cachedComixToken != comixToken) {
             cachedComicVineKey = comicVineKey
             cachedComixToken = comixToken
@@ -44,11 +48,12 @@ object RetrofitClient {
         }
         val headerInterceptor = HeaderInterceptor(
             comicVineKeyProvider = { cachedComicVineKey },
-            comixTokenProvider = { cachedComixToken }
+            comixTokenProvider = { cachedComixToken },
+            comixBaseUrlProvider = { cachedComixBaseUrl }
         )
         return OkHttpClient.Builder()
             .addInterceptor(logging)
-            .addInterceptor(headerInterceptor)
+            .addNetworkInterceptor(headerInterceptor)
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .build()
@@ -58,8 +63,12 @@ object RetrofitClient {
      * 派生 Retrofit 服务制造工厂
      */
     fun <T> createService(context: Context, baseUrl: String, serviceClass: Class<T>): T {
+        val normalizedBaseUrl = ComixEndpointPolicy.normalizeBaseUrl(baseUrl)
+        if (serviceClass == ComicApiService::class.java) {
+            cachedComixBaseUrl = normalizedBaseUrl
+        }
         val retrofit = Retrofit.Builder()
-            .baseUrl(baseUrl)
+            .baseUrl(normalizedBaseUrl)
             .client(getClient(context))
             .addConverterFactory(GsonConverterFactory.create()) // 将 JSON 反序列解构委托给 Gson 引擎
             .build()

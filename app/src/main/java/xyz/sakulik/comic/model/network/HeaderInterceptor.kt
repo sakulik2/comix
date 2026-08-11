@@ -2,6 +2,7 @@ package xyz.sakulik.comic.model.network
 
 import okhttp3.Interceptor
 import okhttp3.Response
+import java.io.IOException
 
 /**
  * HTTP 通信管线拦截器：
@@ -9,17 +10,19 @@ import okhttp3.Response
  */
 class HeaderInterceptor(
     private val comicVineKeyProvider: () -> String?,
-    private val comixTokenProvider: () -> String?
+    private val comixTokenProvider: () -> String?,
+    private val comixBaseUrlProvider: () -> String?
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
         val builder = originalRequest.newBuilder()
+            .removeHeader("x-comix-token")
 
         // 全局通用的 UA伪装
         builder.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
         val httpUrl = originalRequest.url
-        if (httpUrl.host.contains("comicvine.gamespot.com")) {
+        if (httpUrl.host == "comicvine.gamespot.com") {
             // 智能判断：针对 ComicVine 注入 Query 参数 API Key
             val key = comicVineKeyProvider()
             if (!key.isNullOrEmpty()) {
@@ -30,11 +33,12 @@ class HeaderInterceptor(
             }
         } else {
             val token = comixTokenProvider()
-            val path = httpUrl.encodedPath
-            // 侦测请求是否属于 Comix 协议（路径中包含 /api/comics 或 /api/scan）
-            val isComix = path.contains("/api/comics") || path.contains("/api/scan")
+            val isComix = ComixEndpointPolicy.isComixApiRequest(httpUrl, comixBaseUrlProvider())
 
             if (isComix) {
+                if (httpUrl.scheme == "http" && !ComixEndpointPolicy.isPrivateLanHost(httpUrl.host)) {
+                    throw IOException("拒绝向公网 HTTP 地址发送 Comix 请求")
+                }
                 if (!token.isNullOrEmpty()) {
                     builder.header("x-comix-token", token)
                 }

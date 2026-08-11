@@ -24,9 +24,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import kotlinx.coroutines.launch
 import xyz.sakulik.comic.model.db.ComicEntity
 import xyz.sakulik.comic.model.db.ComicRegion
 import xyz.sakulik.comic.model.db.ComicSource
+import xyz.sakulik.comic.model.network.ComixEndpointPolicy
 import xyz.sakulik.comic.viewmodel.AutoScrapeState
 import xyz.sakulik.comic.viewmodel.BookshelfItem
 import xyz.sakulik.comic.viewmodel.BookshelfViewModel
@@ -81,6 +83,7 @@ fun BookshelfScreen(
     var showCollectionRenameDialog by remember { mutableStateOf<xyz.sakulik.comic.model.db.CollectionEntity?>(null) }
 
     val snackbarHostState = remember { SnackbarHostState() }
+    val snackbarScope = rememberCoroutineScope()
 
     // 状态反馈监听
     LaunchedEffect(autoScrapeState) {
@@ -561,14 +564,32 @@ fun BookshelfScreen(
                         visualTransformation = PasswordVisualTransformation(),
                         leadingIcon = { Icon(Icons.Default.VpnKey, contentDescription = null) }
                     )
+                    Text(
+                        "公网地址必须使用 HTTPS；局域网 HTTP 的 Token 仍是明文。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
                     if (inputUrl.isNotBlank()) {
-                        viewModel.saveCloudApi(inputUrl)
-                        viewModel.saveCloudToken(inputToken)
-                        showApiDialog = false
+                        try {
+                            val endpoint = ComixEndpointPolicy.parse(inputUrl)
+                            viewModel.saveCloudApi(endpoint.baseUrl.toString())
+                            viewModel.saveCloudToken(inputToken)
+                            showApiDialog = false
+                            if (endpoint.isCleartextLan && inputToken.isNotBlank()) {
+                                snackbarScope.launch {
+                                    snackbarHostState.showSnackbar("⚠️ 局域网 HTTP 会明文传输 Token")
+                                }
+                            }
+                        } catch (e: IllegalArgumentException) {
+                            snackbarScope.launch {
+                                snackbarHostState.showSnackbar("❌ ${e.message}")
+                            }
+                        }
                     }
                 }) {
                     Text("保存")

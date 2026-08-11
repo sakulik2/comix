@@ -22,6 +22,7 @@ class RemoteStreamPageLoader(
 ) : ComicPageLoader {
 
     private val client = xyz.sakulik.comic.model.network.RetrofitClient.getClient(context)
+    private val normalizedBaseUrl = xyz.sakulik.comic.model.network.ComixEndpointPolicy.normalizeBaseUrl(baseUrl)
     private val cacheDir = File(context.cacheDir, "remote_l2/$comicId").apply { if (!exists()) mkdirs() }
     private val dimensionsCache = ConcurrentHashMap<Int, Pair<Int, Int>>()
     private val sessionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -82,7 +83,6 @@ class RemoteStreamPageLoader(
     }
 
     private fun downloadPageSync(pageIndex: Int, targetFile: File) {
-        val normalizedBaseUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
         val pageNumber = pageIndex + 1
         val url = "${normalizedBaseUrl}api/comics/$comicId/page/$pageNumber"
         

@@ -18,6 +18,8 @@ import net.sf.sevenzipjbinding.*
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
+import xyz.sakulik.comic.model.loader.ArchiveLimitExceededException
+import xyz.sakulik.comic.model.loader.ArchiveResourceLimits
 
 object CoverExtractor {
 
@@ -62,8 +64,13 @@ object CoverExtractor {
                     context.contentResolver.openInputStream(uri)?.use { fis ->
                         ZipInputStream(fis).use { zis ->
                             val names = mutableListOf<String>(); var entry: ZipEntry? = zis.nextEntry
+                            var entryCount = 0L
                             while (entry != null) {
-                                if (!entry.isDirectory && isImage(entry.name)) names.add(entry.name)
+                                entryCount++
+                                ArchiveResourceLimits.requireEntryCount(entryCount)
+                                if (!entry.isDirectory && isImage(entry.name)) {
+                                    names.add(entry.name)
+                                }
                                 entry = zis.nextEntry
                             }
                             names.sort()
@@ -103,6 +110,7 @@ object CoverExtractor {
         if (uri.scheme == "file") {
             try {
                 ZipFile(File(uri.path!!)).use { zip ->
+                    ArchiveResourceLimits.requireEntryCount(zip.size().toLong())
                     val entry = zip.entries().asSequence()
                         .filter { !it.isDirectory && isImage(it.name) }
                         .minByOrNull { it.name }
@@ -146,6 +154,7 @@ object CoverExtractor {
         try {
             val inStream = SevenZipNioStream(channel)
             SevenZip.openInArchive(null, inStream).use { szArchive ->
+                ArchiveResourceLimits.requireEntryCount(szArchive.numberOfItems.toLong())
                 val images = mutableListOf<Pair<Int, String>>()
                 for (i in 0 until szArchive.numberOfItems) {
                     val path = szArchive.getProperty(i, PropID.PATH) as? String ?: continue
@@ -155,17 +164,33 @@ object CoverExtractor {
                 images.sortBy { it.second }
                 if (index in images.indices) {
                     val targetId = images[index].first
-                    val bos = ByteArrayOutputStream()
-                    szArchive.extract(intArrayOf(targetId), false, object : IArchiveExtractCallback {
-                        override fun getStream(idx: Int, askMode: ExtractAskMode?): ISequentialOutStream? {
-                            return if (askMode == ExtractAskMode.EXTRACT) ISequentialOutStream { data -> bos.write(data); data.size } else null
+                    val sourceFile = createSourceTempFile(outPath)
+                    try {
+                        FileOutputStream(sourceFile).use { output ->
+                            var written = 0L
+                            szArchive.extract(intArrayOf(targetId), false, object : IArchiveExtractCallback {
+                                override fun getStream(idx: Int, askMode: ExtractAskMode?): ISequentialOutStream? {
+                                    return if (askMode == ExtractAskMode.EXTRACT) {
+                                        ISequentialOutStream { data ->
+                                            written += data.size
+                                            if (written > ArchiveResourceLimits.MAX_COVER_SOURCE_BYTES) {
+                                                throw ArchiveLimitExceededException("封面源文件超过 64MB 限制")
+                                            }
+                                            output.write(data)
+                                            data.size
+                                        }
+                                    } else null
+                                }
+                                override fun prepareOperation(p0: ExtractAskMode?) {}
+                                override fun setOperationResult(p0: ExtractOperationResult?) {}
+                                override fun setCompleted(p0: Long) {}
+                                override fun setTotal(p0: Long) {}
+                            })
                         }
-                        override fun prepareOperation(p0: ExtractAskMode?) {}
-                        override fun setOperationResult(p0: ExtractOperationResult?) {}
-                        override fun setCompleted(p0: Long) {}
-                        override fun setTotal(p0: Long) {}
-                    })
-                    return decodeAndSave(ByteArrayInputStream(bos.toByteArray()), outPath)
+                        return decodeAndSaveFile(sourceFile, outPath)
+                    } finally {
+                        sourceFile.delete()
+                    }
                 }
             }
         } catch (e: Exception) { Log.e("CoverExtractor", "SevenZip V5 Error", e) }
@@ -176,6 +201,7 @@ object CoverExtractor {
         try {
             val volumeManager = RarVolumeManager(RarNioChannel(channel))
             Archive(volumeManager, null, null).use { arc ->
+                ArchiveResourceLimits.requireEntryCount(arc.fileHeaders.size.toLong())
                 val images = arc.fileHeaders.filter { !it.isDirectory && isImage(it.fileName) }.sortedBy { it.fileName }
                 if (index in images.indices) {
                     arc.getInputStream(images[index]).use { return decodeAndSave(it, outPath) }
@@ -210,17 +236,43 @@ object CoverExtractor {
     }
 
     private fun decodeAndSave(input: InputStream, outPath: File): Boolean {
+        val sourceFile = createSourceTempFile(outPath)
         try {
-            val bytes = input.readBytes()
-            if (bytes.isEmpty()) return false
-            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
-            opts.inSampleSize = calculateInSampleSize(opts, 400, 600)
-            opts.inJustDecodeBounds = false
-            opts.inPreferredConfig = Bitmap.Config.RGB_565
-            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: return false
-            val success = saveBitmapToWebp(bitmap, outPath); bitmap.recycle(); return success
-        } catch (e: Exception) { return false }
+            sourceFile.outputStream().use { output ->
+                ArchiveResourceLimits.copyWithLimit(input, output, ArchiveResourceLimits.MAX_COVER_SOURCE_BYTES)
+            }
+            return decodeAndSaveFile(sourceFile, outPath)
+        } catch (e: Exception) {
+            return false
+        } finally {
+            sourceFile.delete()
+        }
+    }
+
+    private fun decodeAndSaveFile(sourceFile: File, outPath: File): Boolean {
+        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(sourceFile.absolutePath, options)
+        val width = options.outWidth
+        val height = options.outHeight
+        if (width <= 0 || height <= 0) return false
+        if (width > ArchiveResourceLimits.MAX_IMAGE_DIMENSION || height > ArchiveResourceLimits.MAX_IMAGE_DIMENSION) return false
+        if (width.toLong() * height.toLong() > ArchiveResourceLimits.MAX_SOURCE_IMAGE_PIXELS) return false
+
+        options.inSampleSize = calculateInSampleSize(options, 400, 600)
+        options.inJustDecodeBounds = false
+        options.inPreferredConfig = Bitmap.Config.RGB_565
+        val bitmap = BitmapFactory.decodeFile(sourceFile.absolutePath, options) ?: return false
+        return try {
+            saveBitmapToWebp(bitmap, outPath)
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    private fun createSourceTempFile(outPath: File): File {
+        val directory = outPath.parentFile ?: throw IOException("封面缓存目录无效")
+        if (!directory.exists() && !directory.mkdirs()) throw IOException("无法创建封面缓存目录")
+        return File.createTempFile("cover_source_", ".tmp", directory)
     }
 
     private fun saveBitmapToWebp(bitmap: Bitmap, outPath: File): Boolean {
@@ -238,6 +290,9 @@ object CoverExtractor {
         if (h > rH || w > rW) {
             val hh = h / 2; val hw = w / 2
             while (hh / s >= rH && hw / s >= rW) s *= 2
+        }
+        while ((w.toLong() / s) * (h.toLong() / s) > ArchiveResourceLimits.MAX_DECODED_COVER_PIXELS) {
+            s *= 2
         }
         return s
     }

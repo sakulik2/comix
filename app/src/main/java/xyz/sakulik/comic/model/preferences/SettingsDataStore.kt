@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import xyz.sakulik.comic.model.network.ComixEndpointPolicy
 
 // 定义对 Context 的扩展属性，使其作为顶层对象保证单例特性
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
@@ -57,8 +58,9 @@ object SettingsDataStore {
      * 保存云端服务器基础 URL
      */
     suspend fun saveComicApiBaseUrl(context: Context, baseUrl: String) {
+        val normalizedBaseUrl = ComixEndpointPolicy.normalizeBaseUrl(baseUrl)
         context.dataStore.edit { preferences ->
-            preferences[COMIC_API_BASE_URL] = baseUrl.trim()
+            preferences[COMIC_API_BASE_URL] = normalizedBaseUrl
         }
     }
 

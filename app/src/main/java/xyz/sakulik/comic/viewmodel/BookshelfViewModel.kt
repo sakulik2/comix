@@ -186,11 +186,12 @@ class BookshelfViewModel(
         viewModelScope.launch {
             kotlinx.coroutines.flow.combine(
                 SettingsDataStore.getComicVineApiKeyFlow(application),
-                SettingsDataStore.getComicApiTokenFlow(application)
-            ) { vineKey, comixToken ->
-                vineKey to comixToken
-            }.collect { (vineKey, comixToken) ->
-                RetrofitClient.updateTokens(vineKey, comixToken)
+                SettingsDataStore.getComicApiTokenFlow(application),
+                SettingsDataStore.getComicApiBaseUrlFlow(application)
+            ) { vineKey, comixToken, comixBaseUrl ->
+                Triple(vineKey, comixToken, comixBaseUrl)
+            }.collect { (vineKey, comixToken, comixBaseUrl) ->
+                RetrofitClient.updateCredentials(vineKey, comixToken, comixBaseUrl)
             }
         }
         // 启动后台自动清理过期的远程漫画本地 L2 缓存 (LRU 算法，限制总大小不超过 500MB)

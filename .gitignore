@@ -38,3 +38,6 @@ Thumbs.db
 
 # KSP generated files (Usually handled by build/ but being explicit is safer)
 **/build/generated/ksp/
+
+# Temp files
+issues.md

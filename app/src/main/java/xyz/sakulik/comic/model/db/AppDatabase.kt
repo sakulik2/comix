@@ -12,7 +12,7 @@ import androidx.room.RoomDatabase
         CollectionComicCrossRef::class
     ],
     version = 13,
-    exportSchema = false
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun comicDao(): ComicDao
@@ -28,7 +28,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "comic_database"
-                ).fallbackToDestructiveMigration(true).build()
+                ).addMigrations(*DatabaseMigrations.ALL).build()
                 INSTANCE = instance
                 instance
             }
