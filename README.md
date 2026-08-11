@@ -8,6 +8,7 @@ comix 是一个 Android 漫画阅读器，用于管理和阅读本地漫画文�
 - 支持 CBZ、ZIP、CBR、RAR、RAR5 和 PDF 文件。
 - 提供单页、横屏双页和 Webtoon 纵向滚动模式。
 - 支持从右向左翻页、音量键翻页、双击缩放和画质增强。
+- Release 版本可自动检查 GitHub Releases，并通过系统下载管理器下载新版 APK；该功能可以在设置中关闭。
 - 读取 `ComicInfo.xml`，并可在应用内编辑标题、系列、作者、分类等信息。
 - 可选使用 ComicVine 或 Bangumi 搜索元数据。ComicVine 需要用户自己的 API Key。
 - 可连接 `comix.js` 服务端，同步远程书架并按需读取页面。
@@ -48,6 +49,8 @@ comix 是一个 Android 漫画阅读器，用于管理和阅读本地漫画文�
 4. 使用 Android Studio 的 **Run** 操作安装到设备或使用 ARM 系统镜像的模拟器。
 
 首次构建会由 KSP 生成 Room 数据库相关代码。API Key、服务端 Token 和本地路径应在应用设置中配置，不要写入源码或提交到 Git。
+
+自动更新检查只编译到 Release 变体。Debug 变体不包含更新接口、下载逻辑或对应的设置项。
 
 ## 项目结构
 

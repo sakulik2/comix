@@ -41,6 +41,7 @@ import xyz.sakulik.comic.ui.components.ErrorScreen
 import xyz.sakulik.comic.ui.scrape.ScrapeSearchScreen
 import xyz.sakulik.comic.ui.settings.SettingsScreen
 import xyz.sakulik.comic.ui.theme.ComicReaderTheme
+import xyz.sakulik.comic.ui.update.AppUpdatePrompt
 import xyz.sakulik.comic.viewmodel.BookshelfViewModel
 import xyz.sakulik.comic.viewmodel.ComicState
 import xyz.sakulik.comic.viewmodel.ReaderViewModel
@@ -58,11 +59,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             ComicReaderTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    ComicAppNavHost()
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        ComicAppNavHost()
+                    }
+                    AppUpdatePrompt()
                 }
             }
         }

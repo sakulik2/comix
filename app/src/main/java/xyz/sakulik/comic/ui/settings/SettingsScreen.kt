@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import xyz.sakulik.comic.model.network.ComixEndpointPolicy
 import xyz.sakulik.comic.model.preferences.SettingsDataStore
+import xyz.sakulik.comic.ui.update.AppUpdateSettings
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -275,6 +276,8 @@ fun SettingsScreen(
                     }
                 }
             }
+
+            AppUpdateSettings()
 
             Spacer(modifier = Modifier.height(32.dp))
         }
