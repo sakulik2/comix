@@ -191,7 +191,11 @@ class RemoteStreamPageLoader(
 
     private fun processEnhancement(bitmap: Bitmap): Bitmap {
         return if (isSharpenEnabled) {
-            ImageEnhanceEngine.enhance(bitmap) { w, h, cfg -> Bitmap.createBitmap(w, h, cfg) }
+            val enhanced = ImageEnhanceEngine.enhance(bitmap) { width, height, config ->
+                Bitmap.createBitmap(width, height, config)
+            }
+            if (enhanced !== bitmap && !bitmap.isRecycled) bitmap.recycle()
+            enhanced
         } else bitmap
     }
 

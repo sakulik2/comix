@@ -326,7 +326,14 @@ fun ReaderScreen(
                                 leadingIcon = { Icon(painterResource(R.drawable.ic_auto_awesome), null, tint = if (isSharpenEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
                                 onClick = {
                                     showMenu = false
+                                    val enabling = !isSharpenEnabled
                                     onToggleSharpen()
+                                    reloadKey++
+                                    coroutineScope.launch {
+                                        snackbarHostState.showSnackbar(
+                                            if (enabling) "画质增强已开启，当前页面已重新处理" else "画质增强已关闭"
+                                        )
+                                    }
                                 }
                             )
                             DropdownMenuItem(

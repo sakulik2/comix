@@ -39,6 +39,8 @@ fun ZoomableImage(
     val scale = remember { Animatable(1f) }
     val offset = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
     val coroutineScope = rememberCoroutineScope()
+    val currentOnScaleChanged by rememberUpdatedState(onScaleChanged)
+    val currentOnTap by rememberUpdatedState(onTap)
 
     Box(
         modifier = modifier
@@ -46,7 +48,7 @@ fun ZoomableImage(
             // 处理点击事件：单击切换 UI，双击触发缩放动画
             .pointerInput(Unit) {
                 detectTapGestures(
-                    onTap = { onTap() },
+                    onTap = { currentOnTap() },
                     onDoubleTap = { centroid ->
                         coroutineScope.launch {
                             if (scale.value > 1f) {
@@ -102,7 +104,7 @@ fun ZoomableImage(
                                     val newScale = (scale.value * zoomChange).coerceIn(1f, 4f)
                                     coroutineScope.launch {
                                         scale.snapTo(newScale)
-                                        onScaleChanged(newScale)
+                                        currentOnScaleChanged(newScale)
                                     }
 
                                     val maxOffsetX = (size.width * (scale.value - 1)) / 2

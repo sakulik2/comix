@@ -668,7 +668,11 @@ class LocalArchivePageLoader(
             val sampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
             options.inSampleSize = sampleSize
             options.inJustDecodeBounds = false
-            options.inPreferredConfig = Bitmap.Config.RGB_565
+            options.inPreferredConfig = if (isSharpenEnabled) {
+                Bitmap.Config.ARGB_8888
+            } else {
+                Bitmap.Config.RGB_565
+            }
             options.inMutable = true
 
             applyBitmapReuse(options, options.outWidth / sampleSize, options.outHeight / sampleSize)
@@ -852,7 +856,11 @@ class LocalArchivePageLoader(
         val sampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
         options.inSampleSize = sampleSize
         options.inJustDecodeBounds = false
-        options.inPreferredConfig = Bitmap.Config.RGB_565 
+        options.inPreferredConfig = if (isSharpenEnabled) {
+            Bitmap.Config.ARGB_8888
+        } else {
+            Bitmap.Config.RGB_565
+        }
         val targetW = options.outWidth / sampleSize
         val targetH = options.outHeight / sampleSize
         synchronized(bitmapPool) {
