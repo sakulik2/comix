@@ -185,9 +185,11 @@ fun SettingsScreen(
                                                 val code = activeConnection.responseCode
                                                 if (code == 200) {
                                                     val text = activeConnection.inputStream.bufferedReader().use { it.readText() }
-                                                    if (text.contains("comix.js")) {
-                                                        val version = text.substringAfter("apiVersion\":\"").substringBefore("\"")
-                                                        "✅ 连接成功！服务端版本：$version"
+                                                    val response = runCatching { org.json.JSONObject(text) }.getOrNull()
+                                                    if (response?.optString("service") == "comix.js") {
+                                                        val version = response.optString("apiVersion", "未知")
+                                                        val protocolVersion = response.optInt("protocolVersion", 1)
+                                                        "✅ 连接成功！服务端版本：$version，协议：v$protocolVersion"
                                                     } else {
                                                         "⚠️ 连接成功但响应格式不符"
                                                     }

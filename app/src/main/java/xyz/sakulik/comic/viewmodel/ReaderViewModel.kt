@@ -176,14 +176,22 @@ class ReaderViewModel(
                     var remotePages = 0
                     var retryCount = 0
                     val safeComicId = RemoteResourceLimits.validateComicId(entity.location)
+                    val maxReadyChecks = 120
+                    val readyCheckDelayMillis = 5_000L
                     
-                    // 循环检测服务器是否解压完成，最多尝试 15 次（每次间隔 2 秒，共 30 秒）
-                    while (!isReady && retryCount < 15) {
+                    // 大文件服务端解压可能持续数分钟，保持可取消轮询并识别明确失败状态
+                    while (!isReady && retryCount < maxReadyChecks) {
                         try {
                             val detail = apiService.getComicDetail(safeComicId)
                             RemoteResourceLimits.validateComicId(detail.id)
                             if (detail.id != safeComicId) {
                                 throw RemoteResourceLimitException("远程漫画详情 ID 与请求不一致")
+                            }
+                            if (detail.status.equals("failed", ignoreCase = true)) {
+                                throw RemoteResourceLimitException(
+                                    detail.error?.takeIf { it.isNotBlank() }
+                                        ?: "服务端处理漫画失败"
+                                )
                             }
                             isReady = detail.isReady
                             remotePages = RemoteResourceLimits.validatePageCount(
@@ -193,14 +201,15 @@ class ReaderViewModel(
                             if (!isReady) {
                                 _state.value = ComicState.Loading // 保持加载状态
                                 Log.d("ReaderViewModel", "云端正在解压中，第 ${retryCount + 1} 次轮询重试...")
-                                kotlinx.coroutines.delay(2000)
+                                kotlinx.coroutines.delay(readyCheckDelayMillis)
                                 retryCount++
                             }
                         } catch (e: RemoteResourceLimitException) {
                             throw e
                         } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
                             Log.e("ReaderViewModel", "云端详情请求异常:", e)
-                            kotlinx.coroutines.delay(2000)
+                            kotlinx.coroutines.delay(readyCheckDelayMillis)
                             retryCount++
                         }
                     }

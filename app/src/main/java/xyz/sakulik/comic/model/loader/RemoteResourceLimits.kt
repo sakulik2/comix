@@ -4,6 +4,8 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 
 object RemoteResourceLimits {
     const val MAX_TOTAL_PAGES = 10_000
@@ -13,10 +15,11 @@ object RemoteResourceLimits {
     const val MAX_GLOBAL_CACHE_BYTES = 500L * 1024 * 1024
     const val PREFETCH_PAGE_COUNT = 3
 
-    private val SAFE_COMIC_ID = Regex("^[A-Za-z0-9_-]{1,128}$")
-
     fun validateComicId(comicId: String): String {
-        if (!SAFE_COMIC_ID.matches(comicId)) {
+        val hasUnsafeCharacter = comicId.any { character ->
+            character == '/' || character == '\\' || Character.isISOControl(character)
+        }
+        if (comicId.isBlank() || comicId.length > 256 || hasUnsafeCharacter) {
             throw RemoteResourceLimitException("远程漫画 ID 格式无效")
         }
         return comicId
@@ -35,7 +38,10 @@ object RemoteResourceLimits {
     fun resolveComicCacheDirectory(cacheRoot: File, comicId: String): File {
         val safeComicId = validateComicId(comicId)
         val remoteRoot = File(cacheRoot, "remote_l2").canonicalFile
-        val comicDirectory = File(remoteRoot, safeComicId).canonicalFile
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(safeComicId.toByteArray(StandardCharsets.UTF_8))
+            .joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xFF) }
+        val comicDirectory = File(remoteRoot, "comic_$digest").canonicalFile
         if (comicDirectory.parentFile != remoteRoot) {
             throw RemoteResourceLimitException("远程漫画缓存路径无效")
         }

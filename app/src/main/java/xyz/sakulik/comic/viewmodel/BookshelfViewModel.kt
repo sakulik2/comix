@@ -550,6 +550,12 @@ class BookshelfViewModel(
                     // --- 插入或更新其余漫画 ---
                     safeRemoteComics.forEach { item ->
                         val existing = dao.getComicByLocation(item.id)
+                        val remoteTitle = item.title
+                            ?.takeIf { it.isNotBlank() }
+                            ?: item.originalName.substringBeforeLast(".")
+                        val remoteSeriesName = item.series
+                            ?.takeIf { it.isNotBlank() }
+                            ?: remoteTitle
                         
                         // 统一封面处理：拼接完整 URL
                         val absoluteCoverUrl = if (item.coverUrl.startsWith("http")) {
@@ -562,14 +568,16 @@ class BookshelfViewModel(
                         if (existing == null) {
                             Log.d("BookshelfSync", "新增漫画: ${item.originalName}")
                             val newComic = ComicEntity(
-                                title = item.originalName.substringBeforeLast("."),
+                                title = remoteTitle,
                                 uri = absoluteCoverUrl,
                                 extension = item.originalName.substringAfterLast(".", "cbr"),
                                 totalPages = item.totalPages,
                                 source = ComicSource.REMOTE,
                                 location = item.id,
                                 coverCachePath = absoluteCoverUrl,
-                                seriesName = item.originalName.substringBeforeLast("."),
+                                seriesName = remoteSeriesName,
+                                issueNumber = item.issueNumber?.toFloatOrNull(),
+                                volumeNumber = item.volumeNumber?.toFloatOrNull(),
                                 summary = item.summary,
                                 authors = item.authors,
                                 rating = item.rating,
@@ -581,8 +589,12 @@ class BookshelfViewModel(
                         } else {
                             Log.d("BookshelfSync", "更新记录: ${item.originalName}")
                             val updated = existing.copy(
+                                title = remoteTitle,
                                 totalPages = item.totalPages,
                                 coverCachePath = absoluteCoverUrl,
+                                seriesName = remoteSeriesName,
+                                issueNumber = item.issueNumber?.toFloatOrNull() ?: existing.issueNumber,
+                                volumeNumber = item.volumeNumber?.toFloatOrNull() ?: existing.volumeNumber,
                                 summary = item.summary ?: existing.summary,
                                 authors = item.authors ?: existing.authors,
                                 rating = item.rating ?: existing.rating,

@@ -28,6 +28,10 @@ data class CloudComicItem(
     val coverUrl: String,
     val isReady: Boolean,
     val totalPages: Int,
+    val title: String? = null,
+    val series: String? = null,
+    val issueNumber: String? = null,
+    val volumeNumber: String? = null,
     
     // [元数据升维 2.0]
     val summary: String? = null,
@@ -46,6 +50,7 @@ data class ComicDetailResponse(
     val coverUrl: String,
     val isReady: Boolean = false,
     val status: String = "processing",
+    val error: String? = null,
     
     // [元数据升维 2.0]
     val summary: String? = null,

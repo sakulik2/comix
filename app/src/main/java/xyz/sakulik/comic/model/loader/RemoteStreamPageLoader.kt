@@ -20,6 +20,11 @@ class RemoteStreamPageLoader(
     private val baseUrl: String
 ) : ComicPageLoader {
 
+    companion object {
+        private const val DEFAULT_REMOTE_PAGE_WIDTH = 1920
+        private const val MAX_REMOTE_PAGE_WIDTH = 3840
+    }
+
     private val client = xyz.sakulik.comic.model.network.RetrofitClient.getClient(context)
     private val safeComicId = RemoteResourceLimits.validateComicId(comicId)
     private val safeTotalPages = RemoteResourceLimits.validatePageCount(totalPages)
@@ -79,7 +84,7 @@ class RemoteStreamPageLoader(
 
         // 如果本地磁盘 L2 缓存不存在，则执行同步下载
         if (!cacheFile.exists()) {
-            downloadPageSync(pageIndex, cacheFile)
+            downloadPageSync(pageIndex, cacheFile, width)
         }
 
         // 解析尺寸并应用增强
@@ -95,14 +100,23 @@ class RemoteStreamPageLoader(
     }
 
     @Synchronized
-    private fun downloadPageSync(pageIndex: Int, targetFile: File) {
+    private fun downloadPageSync(
+        pageIndex: Int,
+        targetFile: File,
+        requestedWidth: Int = DEFAULT_REMOTE_PAGE_WIDTH
+    ) {
         if (pageIndex !in 0 until safeTotalPages || targetFile.exists()) return
         val pageNumber = pageIndex + 1
+        val downloadWidth = requestedWidth
+            .takeIf { it > 0 }
+            ?.coerceAtMost(MAX_REMOTE_PAGE_WIDTH)
+            ?: DEFAULT_REMOTE_PAGE_WIDTH
         val url = normalizedBaseUrl.newBuilder()
             .addPathSegments("api/comics")
             .addPathSegment(safeComicId)
             .addPathSegment("page")
             .addPathSegment(pageNumber.toString())
+            .addQueryParameter("width", downloadWidth.toString())
             .build()
         val tmpFile = File(targetFile.absolutePath + ".tmp")
         try {
@@ -110,30 +124,39 @@ class RemoteStreamPageLoader(
             RemoteCacheManager.trim(context, cacheDir)
             val request = Request.Builder().url(url).build()
             client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    val responseBody = response.body ?: return
-                    val contentLength = responseBody.contentLength()
-                    if (contentLength > RemoteResourceLimits.MAX_PAGE_BYTES) {
-                        throw RemoteResourceLimitException(
-                            "远程页面超过 ${RemoteResourceLimits.MAX_PAGE_BYTES / 1024 / 1024}MB 限制"
-                        )
+                when (response.code) {
+                    200 -> {
+                        val responseBody = response.body ?: return
+                        if (responseBody.contentType()?.type != "image") {
+                            throw RemoteResourceLimitException("远程页面响应不是图片")
+                        }
+                        val contentLength = responseBody.contentLength()
+                        if (contentLength > RemoteResourceLimits.MAX_PAGE_BYTES) {
+                            throw RemoteResourceLimitException(
+                                "远程页面超过 ${RemoteResourceLimits.MAX_PAGE_BYTES / 1024 / 1024}MB 限制"
+                            )
+                        }
+                        tmpFile.outputStream().use { out ->
+                            RemoteResourceLimits.copyPageWithLimit(responseBody.byteStream(), out)
+                        }
+                        if (!isValidImageFile(tmpFile)) {
+                            throw RemoteResourceLimitException("远程页面不是有效图片或尺寸超出限制")
+                        }
+                        RemoteCacheManager.trim(context, cacheDir, setOf(tmpFile))
+                        if (targetFile.exists() && !targetFile.delete()) {
+                            throw IllegalStateException("无法替换远程页面缓存")
+                        }
+                        if (!tmpFile.renameTo(targetFile)) {
+                            throw IllegalStateException("无法提交远程页面缓存")
+                        }
+                        targetFile.setLastModified(System.currentTimeMillis())
+                        cacheDir.setLastModified(System.currentTimeMillis())
+                        RemoteCacheManager.trim(context, cacheDir, setOf(targetFile))
                     }
-                    tmpFile.outputStream().use { out ->
-                        RemoteResourceLimits.copyPageWithLimit(responseBody.byteStream(), out)
+                    202 -> {
+                        android.util.Log.i("RemoteLoader", "Page $pageIndex is still processing on server")
                     }
-                    if (!isValidImageFile(tmpFile)) {
-                        throw RemoteResourceLimitException("远程页面不是有效图片或尺寸超出限制")
-                    }
-                    RemoteCacheManager.trim(context, cacheDir, setOf(tmpFile))
-                    if (targetFile.exists() && !targetFile.delete()) {
-                        throw IllegalStateException("无法替换远程页面缓存")
-                    }
-                    if (!tmpFile.renameTo(targetFile)) {
-                        throw IllegalStateException("无法提交远程页面缓存")
-                    }
-                    targetFile.setLastModified(System.currentTimeMillis())
-                    cacheDir.setLastModified(System.currentTimeMillis())
-                    RemoteCacheManager.trim(context, cacheDir, setOf(targetFile))
+                    else -> throw java.io.IOException("远程页面请求失败: HTTP ${response.code}")
                 }
             }
         } catch (e: Exception) {
