@@ -6,7 +6,7 @@ This is a single-module Android application. Gradle configuration lives in `sett
 
 ## Build, Test, and Development Commands
 
-Use JDK 17 and Android Studio Ladybug (or newer). The only accepted build workflow is a manual Android Studio build; do not invoke `gradlew`, `gradlew.bat`, or command-line/CI build tasks. Open the repository root in Android Studio, wait for Gradle and KSP synchronization, then use **Build > Make Project** for compilation or **Build > Generate App Bundles or APKs > Build APK(s)** for an installable artifact. Select an emulator or connected device and use the IDE's **Run** action for local development. Run tests from the gutter, test source tree, or **Run** menu, and use **Analyze > Inspect Code** for IDE inspections. The optional ComicVine API key is configured in the app’s settings, not in source control.
+Use JDK 17 and Android Studio Ladybug (or newer). The checked-in Gradle wrapper may be used for command-line builds and tests, for example `./gradlew assembleDebug` or `./gradlew test`. Android Studio remains supported for Gradle/KSP synchronization, device runs, and IDE inspections. Select an emulator or connected device and use the IDE's **Run** action for local development when needed. Do not commit generated `build/` or IDE files. The optional ComicVine API key is configured in the app’s settings, not in source control.
 
 ## Coding Style & Naming Conventions
 
