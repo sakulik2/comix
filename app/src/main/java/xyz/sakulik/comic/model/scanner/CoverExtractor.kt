@@ -20,6 +20,8 @@ import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 import xyz.sakulik.comic.model.loader.ArchiveLimitExceededException
 import xyz.sakulik.comic.model.loader.ArchiveResourceLimits
+import xyz.sakulik.comic.R
+import xyz.sakulik.comic.utils.UiText
 
 object CoverExtractor {
 
@@ -174,7 +176,10 @@ object CoverExtractor {
                                         ISequentialOutStream { data ->
                                             written += data.size
                                             if (written > ArchiveResourceLimits.MAX_COVER_SOURCE_BYTES) {
-                                                throw ArchiveLimitExceededException("封面源文件超过 64MB 限制")
+                                                throw ArchiveLimitExceededException(
+                                                    UiText.Res(R.string.error_cover_source_limit),
+                                                    "cover source exceeds ${ArchiveResourceLimits.MAX_COVER_SOURCE_BYTES} bytes"
+                                                )
                                             }
                                             output.write(data)
                                             data.size
@@ -270,8 +275,8 @@ object CoverExtractor {
     }
 
     private fun createSourceTempFile(outPath: File): File {
-        val directory = outPath.parentFile ?: throw IOException("封面缓存目录无效")
-        if (!directory.exists() && !directory.mkdirs()) throw IOException("无法创建封面缓存目录")
+        val directory = outPath.parentFile ?: throw IOException("invalid cover cache directory")
+        if (!directory.exists() && !directory.mkdirs()) throw IOException("cannot create cover cache directory")
         return File.createTempFile("cover_source_", ".tmp", directory)
     }
 

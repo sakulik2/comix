@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +43,10 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import xyz.sakulik.comic.BuildConfig
+import xyz.sakulik.comic.R
+import xyz.sakulik.comic.utils.LocalizedThrowable
+import xyz.sakulik.comic.utils.UiText
+import xyz.sakulik.comic.utils.resolve
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
@@ -202,12 +207,18 @@ private object UpdateRepository {
 
             val responseCode = activeConnection.responseCode
             if (responseCode != HttpURLConnection.HTTP_OK) {
-                throw IOException("GitHub Releases 返回 HTTP $responseCode")
+                throw UpdateCheckException(
+                    UiText.Res(R.string.error_update_http, listOf(responseCode)),
+                    "GitHub Releases returned HTTP $responseCode"
+                )
             }
 
             val release = JSONObject(readLimited(activeConnection.inputStream))
             val version = release.optString("tag_name").trim().removePrefix("v")
-            if (version.isBlank()) throw IOException("发布版本号为空")
+            if (version.isBlank()) throw UpdateCheckException(
+                UiText.Res(R.string.error_update_empty_version),
+                "release tag_name is blank"
+            )
 
             val assets = release.optJSONArray("assets") ?: return null
             val apkAssets = buildList {
@@ -284,13 +295,22 @@ private object UpdateRepository {
                 val read = stream.read(buffer)
                 if (read < 0) break
                 totalBytes += read
-                if (totalBytes > MAX_RESPONSE_BYTES) throw IOException("更新响应超过大小限制")
+                if (totalBytes > MAX_RESPONSE_BYTES) throw UpdateCheckException(
+                    UiText.Res(R.string.error_update_response_limit),
+                    "update response exceeds $MAX_RESPONSE_BYTES bytes"
+                )
                 output.write(buffer, 0, read)
             }
             return output.toString(Charsets.UTF_8.name())
         }
     }
 }
+
+/** message 只给 logcat 看，用户看到的是 uiText。 */
+private class UpdateCheckException(
+    override val uiText: UiText,
+    technicalMessage: String
+) : IOException(technicalMessage), LocalizedThrowable
 
 @Composable
 fun AppUpdatePrompt() {
@@ -324,11 +344,15 @@ fun AppUpdateSettings() {
     var checking by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf<String?>(null) }
     var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
+    // 下面几句在 lambda / 协程里用，先在 Composable 作用域取出
+    val msgAutoOn = stringResource(R.string.update_auto_check_on)
+    val msgAutoOff = stringResource(R.string.update_auto_check_off)
+    val msgUpToDate = stringResource(R.string.update_up_to_date)
 
     Column {
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            text = "应用更新",
+            text = stringResource(R.string.update_section_title),
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
@@ -349,9 +373,12 @@ fun AppUpdateSettings() {
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
-                        Text("自动检查更新", style = MaterialTheme.typography.bodyLarge)
                         Text(
-                            "关闭后启动应用不会访问更新接口，仍可手动检查",
+                            stringResource(R.string.update_auto_check),
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            stringResource(R.string.update_auto_check_desc),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -361,7 +388,7 @@ fun AppUpdateSettings() {
                         onCheckedChange = { enabled ->
                             automaticChecksEnabled = enabled
                             UpdatePreferences.setEnabled(context, enabled)
-                            statusText = if (enabled) "自动检查已开启" else "自动检查已关闭"
+                            statusText = if (enabled) msgAutoOn else msgAutoOff
                         }
                     )
                 }
@@ -371,7 +398,10 @@ fun AppUpdateSettings() {
                 )
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "当前版本：${BuildConfig.VERSION_NAME}",
+                        text = stringResource(
+                            R.string.update_current_version_label,
+                            BuildConfig.VERSION_NAME
+                        ),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -386,13 +416,17 @@ fun AppUpdateSettings() {
                                 result.fold(
                                     onSuccess = { availableUpdate ->
                                         if (availableUpdate == null) {
-                                            statusText = "当前已是最新版本"
+                                            statusText = msgUpToDate
                                         } else {
                                             updateInfo = availableUpdate
                                         }
                                     },
                                     onFailure = { error ->
-                                        statusText = "检查失败：${error.message ?: "网络请求失败"}"
+                                        val reason = (error as? LocalizedThrowable)?.uiText
+                                            ?.resolve(context)
+                                            ?: context.getString(R.string.update_network_error)
+                                        statusText =
+                                            context.getString(R.string.update_check_failed, reason)
                                     }
                                 )
                             }
@@ -400,7 +434,10 @@ fun AppUpdateSettings() {
                         enabled = !checking,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(if (checking) "正在检查..." else "立即检查更新")
+                        Text(
+                            if (checking) stringResource(R.string.update_checking)
+                            else stringResource(R.string.update_check_now)
+                        )
                     }
                     statusText?.let { message ->
                         Text(
@@ -430,16 +467,22 @@ private fun UpdateDialog(
 ) {
     val context = LocalContext.current
     var enqueueing by remember(updateInfo.version) { mutableStateOf(false) }
+    // Toast 在非 Composable lambda 里弹，先取好文案
+    val msgQueued = stringResource(R.string.update_queued)
+    val msgStartFailed = stringResource(R.string.update_download_start_failed)
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("发现新版本 ${updateInfo.version}") },
+        title = { Text(stringResource(R.string.update_found_title, updateInfo.version)) },
         text = {
             Column {
-                Text("当前版本 ${BuildConfig.VERSION_NAME}")
+                Text(stringResource(R.string.update_current_version, BuildConfig.VERSION_NAME))
                 if (updateInfo.sizeBytes > 0L) {
                     Text(
-                        text = "APK 大小：${formatFileSize(updateInfo.sizeBytes)}",
+                        text = stringResource(
+                            R.string.update_apk_size,
+                            formatFileSize(updateInfo.sizeBytes)
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -460,33 +503,41 @@ private fun UpdateDialog(
                     enqueueing = true
                     runCatching { enqueueDownload(context, updateInfo) }
                         .onSuccess {
-                            Toast.makeText(context, "已加入系统下载队列", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, msgQueued, Toast.LENGTH_LONG).show()
                             onDismiss()
                         }
                         .onFailure { error ->
                             enqueueing = false
+                            val reason = (error as? LocalizedThrowable)?.uiText
+                                ?.resolve(context)
+                                ?: msgStartFailed
                             Toast.makeText(
                                 context,
-                                "下载失败：${error.message ?: "无法启动下载"}",
+                                context.getString(R.string.update_download_failed, reason),
                                 Toast.LENGTH_LONG
                             ).show()
                         }
                 },
                 enabled = !enqueueing
             ) {
-                Text(if (enqueueing) "正在处理..." else "下载 APK")
+                Text(
+                    if (enqueueing) stringResource(R.string.update_enqueueing)
+                    else stringResource(R.string.update_download_apk)
+                )
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("稍后")
+                Text(stringResource(R.string.update_later))
             }
         }
     )
 }
 
 private fun enqueueDownload(context: Context, updateInfo: UpdateInfo): Long {
-    require(isAllowedDownloadUrl(updateInfo.downloadUrl)) { "下载地址不受信任" }
+    // 下面两处 guard 正常不可能触发，保持英文技术串给 logcat；
+    // 用户看到的是调用方 Toast 里的 update_download_start_failed。
+    require(isAllowedDownloadUrl(updateInfo.downloadUrl)) { "untrusted download url" }
     val safeStem = updateInfo.assetName
         .removeSuffix(".apk")
         .replace(Regex("[^A-Za-z0-9._-]"), "_")
@@ -495,7 +546,7 @@ private fun enqueueDownload(context: Context, updateInfo: UpdateInfo): Long {
     val targetName = "$safeStem-${System.currentTimeMillis()}.apk"
     val request = DownloadManager.Request(Uri.parse(updateInfo.downloadUrl))
         .setTitle("comix ${updateInfo.version}")
-        .setDescription("下载完成后点击通知打开 APK")
+        .setDescription(context.getString(R.string.update_notification_desc))
         .setMimeType("application/vnd.android.package-archive")
         .setAllowedNetworkTypes(
             DownloadManager.Request.NETWORK_WIFI or DownloadManager.Request.NETWORK_MOBILE
@@ -504,7 +555,7 @@ private fun enqueueDownload(context: Context, updateInfo: UpdateInfo): Long {
         .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
         .setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, targetName)
     val downloadManager = context.getSystemService(DownloadManager::class.java)
-        ?: throw IllegalStateException("系统下载服务不可用")
+        ?: throw IllegalStateException("DownloadManager service unavailable")
     return downloadManager.enqueue(request)
 }
 

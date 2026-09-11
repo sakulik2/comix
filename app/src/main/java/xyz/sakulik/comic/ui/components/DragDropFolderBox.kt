@@ -20,9 +20,11 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import xyz.sakulik.comic.R
 import xyz.sakulik.comic.viewmodel.BookshelfItem
 
 class DragDropState {
@@ -142,7 +144,7 @@ fun DragDropFolderBox(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "拖拽归组...",
+                                text = stringResource(R.string.bookshelf_drag_to_group),
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
                             )

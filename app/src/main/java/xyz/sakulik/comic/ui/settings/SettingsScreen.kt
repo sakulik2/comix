@@ -13,10 +13,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import xyz.sakulik.comic.R
+import xyz.sakulik.comic.utils.resolve
+import xyz.sakulik.comic.utils.toUiText
 import xyz.sakulik.comic.model.network.ComixEndpointPolicy
 import xyz.sakulik.comic.model.preferences.SettingsDataStore
 import xyz.sakulik.comic.ui.update.AppUpdateSettings
@@ -41,13 +45,24 @@ fun SettingsScreen(
 
     val remoteEnabled by SettingsDataStore.getRemoteEnabledFlow(context).collectAsState(initial = true)
 
+    // 协程与 withContext 内无法调用 stringResource，先在 Composable 作用域取出
+    val msgApiKeySaved = stringResource(R.string.settings_api_key_saved)
+    val msgSavedCleartext = stringResource(R.string.settings_saved_cleartext)
+    val msgRemoteSaved = stringResource(R.string.settings_remote_saved)
+    val msgUrlRequired = stringResource(R.string.settings_url_required)
+    val msgTestUrlFailed = stringResource(R.string.settings_test_url_failed)
+    val msgBadFormat = stringResource(R.string.settings_conn_bad_format)
+    val msgUnauthorized = stringResource(R.string.settings_conn_unauthorized)
+    val msgUnknown = stringResource(R.string.common_unknown)
+    val msgCacheCleared = stringResource(R.string.settings_cache_cleared)
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("系统设置") },
+                title = { Text(stringResource(R.string.settings_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                     }
                 }
             )
@@ -61,7 +76,7 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
         ) {
             // --- Group 0: 安全与授权 ---
-            SettingsSectionTitle("安全与授权")
+            SettingsSectionTitle(stringResource(R.string.settings_section_security))
             SettingsSurface {
                 Column(modifier = Modifier.padding(16.dp)) {
                     OutlinedTextField(
@@ -77,12 +92,12 @@ fun SettingsScreen(
                         onClick = {
                             scope.launch {
                                 SettingsDataStore.saveComicVineApiKey(context, apiKeyInput)
-                                snackbarHostState.showSnackbar("✅ API Key 已保存")
+                                snackbarHostState.showSnackbar(msgApiKeySaved)
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("保存认证配置")
+                        Text(stringResource(R.string.settings_save_credentials))
                     }
                 }
             }
@@ -90,12 +105,12 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             // --- Group 1: 云端流媒体库 ---
-            SettingsSectionTitle("云端流媒体库")
+            SettingsSectionTitle(stringResource(R.string.settings_section_remote))
             SettingsSurface {
                 Column {
                     SettingsSwitchRow(
-                        title = "开启云端同步功能",
-                        subtitle = "关闭后将隐藏同步按钮及所有云端漫画",
+                        title = stringResource(R.string.settings_remote_enable),
+                        subtitle = stringResource(R.string.settings_remote_enable_hint),
                         checked = remoteEnabled,
                         onCheckedChange = { scope.launch { SettingsDataStore.saveRemoteEnabled(context, it) } }
                     )
@@ -115,13 +130,13 @@ fun SettingsScreen(
                                 value = apiTokenInput,
                                 onValueChange = { apiTokenInput = it },
                                 label = { Text("Comix API Token") },
-                                placeholder = { Text("留空表示服务端未加密") },
+                                placeholder = { Text(stringResource(R.string.settings_token_hint)) },
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true,
                                 visualTransformation = PasswordVisualTransformation()
                             )
                             Text(
-                                text = "公网地址必须使用 HTTPS；局域网 HTTP 可用，但 Token 仍会以明文传输。",
+                                text = stringResource(R.string.settings_https_notice),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(top = 6.dp)
@@ -136,37 +151,47 @@ fun SettingsScreen(
                                             SettingsDataStore.saveComicApiBaseUrl(context, apiUrlInput)
                                             SettingsDataStore.saveComicApiToken(context, apiTokenInput)
                                             val message = if (endpoint.isCleartextLan && apiTokenInput.isNotBlank()) {
-                                                "⚠️ 配置已保存；局域网 HTTP 会明文传输 Token"
+                                                msgSavedCleartext
                                             } else {
-                                                "✅ 云端配置已保存"
+                                                msgRemoteSaved
                                             }
                                             snackbarHostState.showSnackbar(message)
                                         } catch (e: IllegalArgumentException) {
-                                            snackbarHostState.showSnackbar("❌ ${e.message}")
+                                            snackbarHostState.showSnackbar(
+                                                context.getString(
+                                                    R.string.settings_error_prefix,
+                                                    e.toUiText().resolve(context)
+                                                )
+                                            )
                                         }
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("保存云端配置")
+                                Text(stringResource(R.string.settings_save_remote))
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                             OutlinedButton(
                                 onClick = {
                                     scope.launch {
                                         if (apiUrlInput.isBlank()) {
-                                            snackbarHostState.showSnackbar("❌ 请先输入 API Base URL")
+                                            snackbarHostState.showSnackbar(msgUrlRequired)
                                             return@launch
                                         }
                                         val endpoint = try {
                                             ComixEndpointPolicy.parse(apiUrlInput)
                                         } catch (e: IllegalArgumentException) {
-                                            snackbarHostState.showSnackbar("❌ ${e.message}")
+                                            snackbarHostState.showSnackbar(
+                                                context.getString(
+                                                    R.string.settings_error_prefix,
+                                                    e.toUiText().resolve(context)
+                                                )
+                                            )
                                             return@launch
                                         }
                                         val testUrl = endpoint.baseUrl.resolve("api")?.toString()
                                         if (testUrl == null) {
-                                            snackbarHostState.showSnackbar("❌ 无法生成测试地址")
+                                            snackbarHostState.showSnackbar(msgTestUrlFailed)
                                             return@launch
                                         }
                                         val token = apiTokenInput.trim()
@@ -188,19 +213,19 @@ fun SettingsScreen(
                                                     val text = activeConnection.inputStream.bufferedReader().use { it.readText() }
                                                     val response = runCatching { org.json.JSONObject(text) }.getOrNull()
                                                     if (response?.optString("service") == "comix.js") {
-                                                        val version = response.optString("apiVersion", "未知")
+                                                        val version = response.optString("apiVersion", msgUnknown)
                                                         val protocolVersion = response.optInt("protocolVersion", 1)
-                                                        "✅ 连接成功！服务端版本：$version，协议：v$protocolVersion"
+                                                        context.getString(R.string.settings_conn_ok, version, protocolVersion)
                                                     } else {
-                                                        "⚠️ 连接成功但响应格式不符"
+                                                        msgBadFormat
                                                     }
                                                 } else if (code == 401) {
-                                                    "❌ 鉴权失败：API Token 错误或未配置"
+                                                    msgUnauthorized
                                                 } else {
-                                                    "❌ 连接失败，状态码：$code"
+                                                    context.getString(R.string.settings_conn_failed_code, code)
                                                 }
                                             } catch (e: java.lang.Exception) {
-                                                "❌ 无法连接到服务器: ${e.message}"
+                                                context.getString(R.string.settings_conn_error, e.message ?: "")
                                             } finally {
                                                 connection?.disconnect()
                                             }
@@ -210,10 +235,10 @@ fun SettingsScreen(
                                 },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("测试服务器连接")
+                                Text(stringResource(R.string.settings_test_connection))
                             }
                             Spacer(modifier = Modifier.height(24.dp))
-                            Text("危险区域", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+                            Text(stringResource(R.string.settings_danger_zone), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
                             Spacer(modifier = Modifier.height(8.dp))
                             OutlinedButton(
                                 onClick = onClearRemoteLibrary,
@@ -221,9 +246,9 @@ fun SettingsScreen(
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
                                 border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error)
                             ) {
-                                Text("清除本地全量云端数据索引")
+                                Text(stringResource(R.string.settings_clear_remote))
                             }
-                            Text("此操作不可逆，将从本地数据库中移除远程漫画记录", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp))
+                            Text(stringResource(R.string.settings_clear_remote_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp))
                         }
                     }
                 }
@@ -232,13 +257,13 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             // --- Group 2: 全局刮削器 ---
-            SettingsSectionTitle("全局漫库刮削器")
+            SettingsSectionTitle(stringResource(R.string.settings_section_scraper))
             val metadataEnabled by SettingsDataStore.getMetadataEnabledFlow(context).collectAsState(initial = true)
             SettingsSurface {
                 Column {
                     SettingsSwitchRow(
-                        title = "启用智能元数据",
-                        subtitle = "关闭后将停止系列聚合并显示原始文件名",
+                        title = stringResource(R.string.settings_metadata_enable),
+                        subtitle = stringResource(R.string.settings_metadata_enable_hint),
                         checked = metadataEnabled,
                         onCheckedChange = { scope.launch { SettingsDataStore.saveMetadataEnabled(context, it) } }
                     )
@@ -248,13 +273,13 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             // --- Group 3: 存储管理 ---
-            SettingsSectionTitle("本地存储管理")
+            SettingsSectionTitle(stringResource(R.string.settings_section_storage))
             val autoClearCovers by SettingsDataStore.getAutoClearCoversFlow(context).collectAsState(initial = false)
             SettingsSurface {
                 Column {
                     SettingsSwitchRow(
-                        title = "启动时自动清理封面",
-                        subtitle = "极致瘦身模式，每次重启应用都会重置封面缓存",
+                        title = stringResource(R.string.settings_auto_clear_covers),
+                        subtitle = stringResource(R.string.settings_auto_clear_covers_hint),
                         checked = autoClearCovers,
                         onCheckedChange = { scope.launch { SettingsDataStore.saveAutoClearCovers(context, it) } }
                     )
@@ -266,12 +291,12 @@ fun SettingsScreen(
                                     context.cacheDir.listFiles()?.forEach { it.deleteRecursively() }
                                     val coverDir = java.io.File(context.filesDir, "covers")
                                     if (coverDir.exists()) coverDir.deleteRecursively()
-                                    snackbarHostState.showSnackbar("✅ 所有缓存与封面已清理完毕")
+                                    snackbarHostState.showSnackbar(msgCacheCleared)
                                 }
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("手动一键清理全量应用缓存")
+                            Text(stringResource(R.string.settings_clear_cache))
                         }
                     }
                 }

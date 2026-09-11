@@ -15,11 +15,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import xyz.sakulik.comic.R
+import xyz.sakulik.comic.utils.UiText
+import xyz.sakulik.comic.utils.resolve
 
 /**
  * 全沉浸式精工报错界面
@@ -27,9 +32,10 @@ import androidx.compose.ui.unit.sp
  */
 @Composable
 fun ErrorScreen(
-    message: String,
+    text: UiText,
     onBack: () -> Unit
 ) {
+    val message = text.resolve(LocalContext.current)
     // 呼吸动画：警示圈忽明忽暗
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseAlpha by infiniteTransition.animateFloat(
@@ -116,7 +122,7 @@ fun ErrorScreen(
             Spacer(modifier = Modifier.height(32.dp))
 
             Text(
-                text = "无法打开漫画",
+                text = stringResource(R.string.error_title),
                 style = MaterialTheme.typography.headlineMedium.copy(
                     fontWeight = FontWeight.Bold,
                     color = Color.White
@@ -133,7 +139,7 @@ fun ErrorScreen(
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
                     Text(
-                        text = "错误详情",
+                        text = stringResource(R.string.error_details),
                         style = MaterialTheme.typography.labelSmall,
                         color = Color(0xFFE53935),
                         letterSpacing = 1.5.sp
@@ -160,17 +166,17 @@ fun ErrorScreen(
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
                     Text(
-                        text = "可能的原因",
+                        text = stringResource(R.string.error_causes),
                         style = MaterialTheme.typography.labelSmall,
                         color = Color(0xFFFF9800),
                         letterSpacing = 1.5.sp
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     listOf(
-                        "文件格式不受支持（仅支持 CBZ / CBR / PDF）",
-                        "文件已损坏或不完整",
-                        "存储权限被撤销，App 无法读取",
-                        "文件路径已发生变更或被移动"
+                        stringResource(R.string.error_cause_format),
+                        stringResource(R.string.error_cause_corrupt),
+                        stringResource(R.string.error_cause_permission),
+                        stringResource(R.string.error_cause_moved)
                     ).forEach { hint ->
                         Row(
                             verticalAlignment = Alignment.Top,
@@ -211,7 +217,7 @@ fun ErrorScreen(
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(Modifier.width(8.dp))
-                Text("返回书架", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                Text(stringResource(R.string.error_back_to_library), fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
             }
         }
     }

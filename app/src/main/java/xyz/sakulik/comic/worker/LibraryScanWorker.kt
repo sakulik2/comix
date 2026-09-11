@@ -21,6 +21,7 @@ import xyz.sakulik.comic.model.scanner.ComicNameParser
 import xyz.sakulik.comic.model.scanner.CoverExtractor
 import xyz.sakulik.comic.model.preferences.SettingsDataStore
 import kotlinx.coroutines.flow.first
+import xyz.sakulik.comic.R
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
@@ -53,11 +54,11 @@ class LibraryScanWorker(
         }
 
         if (targetUris.isEmpty()) {
-            setProgress(workDataOf(PROGRESS_MSG to "未找到授权扫描的目录，请先添加挂载点"))
+            setProgress(workDataOf(PROGRESS_MSG to applicationContext.getString(R.string.scan_no_authorized_dirs)))
             return@withContext Result.success()
         }
 
-        setProgress(workDataOf(PROGRESS_MSG to "准备扫描 ${targetUris.size} 个授权目录..."))
+        setProgress(workDataOf(PROGRESS_MSG to applicationContext.getString(R.string.scan_preparing, targetUris.size)))
 
         // 存活的独立文件列表（防重入哈希）
         // 多个解压任务并发写入，用线程安全集合，否则清理阶段会把已扫到的漫画误判成死链
@@ -80,7 +81,12 @@ class LibraryScanWorker(
                         
                         // 为了 UI 丝滑，每处理 10% 或 10 本书上报一次进度，而不是疯狂刷新
                         if (index % 10 == 0 || index == allFiles.size - 1) {
-                            setProgress(workDataOf(PROGRESS_MSG to "同步进度: ${index + 1}/${allFiles.size} - ${file.name}"))
+                            setProgress(workDataOf(PROGRESS_MSG to applicationContext.getString(
+                                    R.string.scan_progress,
+                                    index + 1,
+                                    allFiles.size,
+                                    file.name
+                                )))
                         }
 
                         val existing = comicDao.getComicByUri(fileUriStr)
@@ -183,7 +189,7 @@ class LibraryScanWorker(
 
         // 阶段二：废墟自动清理（严格镜像剔除）
         // [极重要修复]：如果是局部扫描（uriString != null），则只清理该目录下的死链，不可动全局！
-        setProgress(workDataOf(PROGRESS_MSG to "正在比对数据，清理物理剥离项..."))
+        setProgress(workDataOf(PROGRESS_MSG to applicationContext.getString(R.string.scan_cleanup)))
         val allDbComics = comicDao.getAllComicsUnordered()
         var deletedCount = 0
 
@@ -208,8 +214,13 @@ class LibraryScanWorker(
             }
         }
 
-        val deleteMsg = if(deletedCount > 0) "，移除了 $deletedCount 本死链" else ""
-        setProgress(workDataOf(PROGRESS_MSG to "同步结束！共校验 $foundCount 本图鉴$deleteMsg"))
+        // 英文语序不同，不拼接半句，整句拆成两个 key
+        val doneMsg = if (deletedCount > 0) {
+            applicationContext.getString(R.string.scan_done_with_removals, foundCount, deletedCount)
+        } else {
+            applicationContext.getString(R.string.scan_done, foundCount)
+        }
+        setProgress(workDataOf(PROGRESS_MSG to doneMsg))
         return@withContext Result.success()
     }
 

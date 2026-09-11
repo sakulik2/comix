@@ -11,6 +11,7 @@ import xyz.sakulik.comic.model.db.AppDatabase
 import xyz.sakulik.comic.model.db.ComicEntity
 import xyz.sakulik.comic.model.metadata.LocalComicInfoParser
 import java.io.File
+import xyz.sakulik.comic.R
 import java.util.UUID
 
 class LibraryScanner(private val context: Context) {
@@ -41,7 +42,11 @@ class LibraryScanner(private val context: Context) {
                     val existing = dao.getComicByUri(uri)
                     
                     if (existing == null || existing.lastModified != lastMod || existing.fileSize != size) {
-                        _scanProgress.value = "正在${if (existing == null) "扫描" else "更新"}: $name"
+                        // 英文语序不同，整句分两个 key，不拼词
+                        _scanProgress.value = context.getString(
+                            if (existing == null) R.string.scan_scanning else R.string.scan_updating,
+                            name
+                        )
                         val coverFileName = UUID.randomUUID().toString() + ".webp"
                         val coverFile = File(coverDir, coverFileName)
                         val success = CoverExtractor.extractCover(context, file.uri, ext, coverFile)

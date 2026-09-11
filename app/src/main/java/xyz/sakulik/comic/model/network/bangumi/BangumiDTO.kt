@@ -24,7 +24,8 @@ data class BangumiSubject(
      * 防腐转换扩展函数，优先提取中文翻译名称
      */
     fun toDomainModel(): ScrapedComicInfo {
-        val finalTitle = nameCn?.takeIf { it.isNotBlank() } ?: name ?: "未知书名"
+        // 兜底留空串，由 UI 层决定显示什么，映射层不产出用户文案
+        val finalTitle = nameCn?.takeIf { it.isNotBlank() } ?: name ?: ""
         return ScrapedComicInfo(
             title = finalTitle,
             coverUrl = images?.large ?: images?.common,

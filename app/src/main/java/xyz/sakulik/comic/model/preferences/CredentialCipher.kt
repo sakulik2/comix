@@ -37,10 +37,10 @@ object CredentialCipher {
         if (value == null || value.isEmpty() || !value.startsWith(VALUE_PREFIX)) return value
         return runCatching {
             val payload = Base64.decode(value.removePrefix(VALUE_PREFIX), Base64.NO_WRAP)
-            if (payload.isEmpty()) throw IllegalArgumentException("加密凭据为空")
+            if (payload.isEmpty()) throw IllegalArgumentException("encrypted credential payload is empty")
             val ivSize = payload[0].toInt() and 0xFF
             if (ivSize !in 12..16 || payload.size <= 1 + ivSize) {
-                throw IllegalArgumentException("加密凭据格式无效")
+                throw IllegalArgumentException("encrypted credential payload is malformed")
             }
             val iv = payload.copyOfRange(1, 1 + ivSize)
             val ciphertext = payload.copyOfRange(1 + ivSize, payload.size)

@@ -16,11 +16,15 @@ import xyz.sakulik.comic.model.loader.ComicPageLoader
 import xyz.sakulik.comic.model.loader.ComicPageLoaderFactory
 import java.io.File
 import java.io.FileOutputStream
+import xyz.sakulik.comic.R
+import xyz.sakulik.comic.utils.LocalizedIllegalStateException
+import xyz.sakulik.comic.utils.UiText
+import xyz.sakulik.comic.utils.toUiText
 
 sealed class ComicState {
     object Idle : ComicState()
     object Loading : ComicState()
-    data class Error(val message: String) : ComicState()
+    data class Error(val text: UiText) : ComicState()
     data class Ready(
         val pageCount: Int,
         val fileName: String,
@@ -76,18 +80,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val ext = fileName.substringAfterLast('.', "").lowercase()
 
                 // 使用加载器工厂创建对应的页面加载引擎
-                val entity = currentEntity ?: throw IllegalStateException("未指定任何漫画实体")
+                val entity = currentEntity ?: throw LocalizedIllegalStateException(
+                    UiText.Res(R.string.error_no_entity),
+                    "no comic entity was specified"
+                )
                 val loader = loaderFactory.create(entity)
                 pageLoader = loader
 
                 val pageCount = loader.getPageCount()
-                if (pageCount == 0) throw IllegalStateException("无法解析页面，文件可能已损坏或暂不支持该格式")
+                if (pageCount == 0) throw LocalizedIllegalStateException(
+                    UiText.Res(R.string.error_no_pages),
+                    "loader reported zero pages"
+                )
 
                 // 由于采用流式加载与镜像机制，无需预先全量解压，极大提升了开启速度
                 _state.value = ComicState.Ready(pageCount, fileName, ext, uri, loader)
             } catch (e: Exception) {
                 e.printStackTrace()
-                _state.value = ComicState.Error(e.message ?: "解析失败，可能是文件损坏或格式不支持")
+                _state.value = ComicState.Error(e.toUiText())
             }
         }
     }

@@ -1,0 +1,266 @@
+<resources>
+
+    <!-- ===== 通用 ===== -->
+    <string name="common_ok">确定</string>
+    <string name="common_cancel">取消</string>
+    <string name="common_save">保存</string>
+    <string name="common_back">返回</string>
+    <string name="common_create">创建</string>
+    <string name="common_rename">重命名</string>
+    <string name="common_remove">移除</string>
+    <string name="common_set_as_cover">设为封面</string>
+    <string name="common_summary">剧情简介</string>
+    <string name="common_settings">设置</string>
+    <string name="common_unknown">未知</string>
+
+    <!-- ===== 书架 ===== -->
+    <string name="bookshelf_title">我的漫库</string>
+    <string name="bookshelf_search_hint">搜索您的收藏...</string>
+    <string name="bookshelf_empty_title">漫库目前是空的</string>
+    <string name="bookshelf_empty_hint">点击右下角按钮添加您的漫画文件夹</string>
+    <string name="bookshelf_scrape_done">✅ 元数据已更新！</string>
+    <string name="bookshelf_scrape_failed">❌ %1$s</string>
+    <string name="bookshelf_no_summary">暂无剧情简介</string>
+    <plurals name="bookshelf_volume_count">
+        <item quantity="other">%d 册</item>
+    </plurals>
+
+    <!-- 地区筛选 tab -->
+    <string name="region_all">全部</string>
+    <string name="region_comic">美漫</string>
+    <string name="region_manga">日漫</string>
+    <string name="region_unknown">未分类</string>
+
+    <!-- 排序 -->
+    <string name="sort_last_read">上次阅读</string>
+    <string name="sort_added_time">添加时间</string>
+    <string name="sort_title_az">标题 (A-Z)</string>
+
+    <!-- 添加菜单 -->
+    <string name="bookshelf_add_local">本地</string>
+    <string name="bookshelf_sync">同步</string>
+    <string name="cd_toggle_add_menu">切换添加模式</string>
+    <string name="cd_scan_all">全局扫描同步</string>
+    <string name="cd_sort">排序</string>
+
+    <!-- 合集 -->
+    <string name="collection_section_title">我的合集</string>
+    <string name="collection_new">新建合集</string>
+    <string name="collection_name_label">合集名称</string>
+    <string name="collection_add_to">加入合集</string>
+    <string name="collection_none_yet">您还没有创建任何合集</string>
+    <string name="collection_manage">管理合集</string>
+    <string name="collection_delete">删除合集</string>
+    <string name="collection_delete_confirm">确定要删除合集《%1$s》吗？这不会删除合集内的漫画文件。</string>
+    <string name="collection_delete_action">确认删除</string>
+    <string name="bookshelf_drag_to_group">拖拽归组...</string>
+
+    <!-- 详情底部面板 -->
+    <string name="action_read">阅读</string>
+    <string name="action_reset">重置</string>
+    <string name="action_scrape">刮削</string>
+    <string name="action_collection">合集</string>
+    <string name="action_details">详情</string>
+    <string name="metadata_advanced">元数据深度管理</string>
+    <string name="metadata_edit_fields">手动编辑字段</string>
+    <string name="metadata_search_manual">手动搜索元数据</string>
+    <string name="bookshelf_advanced_options">高级管理选项</string>
+    <string name="bookshelf_remove_from_library">仅从书架移除</string>
+    <string name="bookshelf_remove_from_library_hint">保留本地文件，仅清除数据库记录</string>
+    <string name="bookshelf_delete_file">彻底删除物理文件</string>
+    <string name="bookshelf_delete_file_hint">警告：将从磁盘永久删除，不可恢复</string>
+
+    <!-- 元数据详情 -->
+    <string name="metadata_remark">备注名</string>
+    <string name="metadata_original_title">原始标题</string>
+    <string name="metadata_series">系列</string>
+    <string name="metadata_year">出版年份</string>
+    <string name="metadata_publisher">出版社</string>
+    <string name="metadata_authors">创作者</string>
+    <string name="metadata_genres">类型</string>
+    <string name="metadata_rating">分级</string>
+    <string name="metadata_pages">页数</string>
+    <string name="metadata_page_count_value">%1$d 页</string>
+    <string name="metadata_path">路径</string>
+
+    <!-- 元数据编辑 -->
+    <string name="editor_title">编辑详细信息</string>
+    <string name="editor_extract_from_filename">从文件名提取标题</string>
+    <string name="editor_remark">书架备注名</string>
+    <string name="editor_series">所属系列</string>
+    <string name="editor_year">年份</string>
+    <string name="editor_authors">作者</string>
+
+    <!-- 系列详情 -->
+    <string name="series_collected">合订本 / 卷</string>
+    <string name="series_issues">单本 / 期</string>
+
+    <!-- 远程 API 对话框 -->
+    <string name="remote_dialog_title">添加远程 API 地址</string>
+    <string name="remote_dialog_hint">请输入符合 Comix 规范的流媒体 API 基址：</string>
+    <string name="remote_token_label">访问令牌 (Token)：</string>
+    <string name="remote_token_hint">留空表示不鉴权</string>
+    <string name="remote_https_notice">公网地址必须使用 HTTPS；局域网 HTTP 的 Token 仍是明文。</string>
+    <string name="remote_cleartext_warning">⚠️ 局域网 HTTP 会明文传输 Token</string>
+
+    <!-- ===== 阅读器 ===== -->
+    <string name="reader_reload_page">重新加载当前页</string>
+    <string name="reader_reloading">正在重新加载当前页面...</string>
+    <string name="reader_cover_updated">封面已更新并同步元数据</string>
+    <string name="reader_sharpen_on">开启画质增强</string>
+    <string name="reader_sharpen_off">关闭画质增强</string>
+    <string name="reader_sharpen_enabled">画质增强已开启，当前页面已重新处理</string>
+    <string name="reader_sharpen_disabled">画质增强已关闭</string>
+    <string name="reader_rescrape">手动搜索重刮削</string>
+    <string name="reader_rtl">从右向左翻页 (RTL)</string>
+    <string name="reader_volume_key">音量键翻页</string>
+    <string name="reader_jump_title">跳转到页码</string>
+    <string name="reader_jump_hint">输入页码 (1 - %1$d)</string>
+    <string name="cd_toggle_reader_mode">切换模式</string>
+    <string name="cd_more_options">更多选项</string>
+    <string name="cd_reader_canvas">阅读主页画布</string>
+
+    <!-- 页面加载 -->
+    <string name="page_load_failed">加载失败</string>
+    <string name="page_load_failed_retry">加载失败，点击重试</string>
+    <string name="cd_comic_page">漫画页</string>
+    <string name="cd_remote_comic_page">云端漫画页</string>
+
+    <!-- ===== 错误页 ===== -->
+    <string name="error_title">无法打开漫画</string>
+    <string name="error_details">错误详情</string>
+    <string name="error_causes">可能的原因</string>
+    <string name="error_cause_format">文件格式不受支持（仅支持 CBZ / CBR / PDF）</string>
+    <string name="error_cause_corrupt">文件已损坏或不完整</string>
+    <string name="error_cause_permission">存储权限被撤销，App 无法读取</string>
+    <string name="error_cause_moved">文件路径已发生变更或被移动</string>
+    <string name="error_back_to_library">返回书架</string>
+
+    <!-- ===== 设置 ===== -->
+    <string name="settings_title">系统设置</string>
+    <string name="settings_section_security">安全与授权</string>
+    <string name="settings_api_key_saved">✅ API Key 已保存</string>
+    <string name="settings_save_credentials">保存认证配置</string>
+    <string name="settings_section_remote">云端流媒体库</string>
+    <string name="settings_remote_enable">开启云端同步功能</string>
+    <string name="settings_remote_enable_hint">关闭后将隐藏同步按钮及所有云端漫画</string>
+    <string name="settings_token_hint">留空表示服务端未加密</string>
+    <string name="settings_https_notice">公网地址必须使用 HTTPS；局域网 HTTP 可用，但 Token 仍会以明文传输。</string>
+    <string name="settings_saved_cleartext">⚠️ 配置已保存；局域网 HTTP 会明文传输 Token</string>
+    <string name="settings_remote_saved">✅ 云端配置已保存</string>
+    <string name="settings_save_remote">保存云端配置</string>
+    <string name="settings_url_required">❌ 请先输入 API Base URL</string>
+    <string name="settings_test_url_failed">❌ 无法生成测试地址</string>
+    <string name="settings_conn_ok">✅ 连接成功！服务端版本：%1$s，协议：v%2$d</string>
+    <string name="settings_conn_bad_format">⚠️ 连接成功但响应格式不符</string>
+    <string name="settings_conn_unauthorized">❌ 鉴权失败：API Token 错误或未配置</string>
+    <string name="settings_conn_failed_code">❌ 连接失败，状态码：%1$d</string>
+    <string name="settings_conn_error">❌ 无法连接到服务器: %1$s</string>
+    <string name="settings_test_connection">测试服务器连接</string>
+    <string name="settings_danger_zone">危险区域</string>
+    <string name="settings_clear_remote">清除本地全量云端数据索引</string>
+    <string name="settings_clear_remote_hint">此操作不可逆，将从本地数据库中移除远程漫画记录</string>
+    <string name="settings_section_scraper">全局漫库刮削器</string>
+    <string name="settings_metadata_enable">启用智能元数据</string>
+    <string name="settings_metadata_enable_hint">关闭后将停止系列聚合并显示原始文件名</string>
+    <string name="settings_section_storage">本地存储管理</string>
+    <string name="settings_auto_clear_covers">启动时自动清理封面</string>
+    <string name="settings_auto_clear_covers_hint">极致瘦身模式，每次重启应用都会重置封面缓存</string>
+    <string name="settings_cache_cleared">✅ 所有缓存与封面已清理完毕</string>
+    <string name="settings_clear_cache">手动一键清理全量应用缓存</string>
+    <string name="settings_error_prefix">❌ %1$s</string>
+
+    <!-- ===== 刮削 ===== -->
+    <string name="scrape_smart_fallback">双核容灾优先</string>
+    <string name="scrape_comic_vine_only">仅限 ComicVine</string>
+    <string name="scrape_bangumi_only">仅限 Bangumi</string>
+    <string name="scrape_search_series">搜索系列</string>
+    <string name="scrape_pick_issue">选取分期</string>
+    <string name="scrape_search_hint">输入关键词搜索系列…</string>
+    <string name="scrape_strategy">搜索策略</string>
+    <string name="scrape_browsing_series">正在浏览系列「%1$s」下的全部分期</string>
+    <string name="scrape_no_series_found">没有搜到系列，请尝试更换关键词</string>
+    <string name="scrape_no_issues_found">该系列下暂无匹配分期</string>
+    <string name="scrape_source_comic_vine">ComicVine 数据库</string>
+    <string name="scrape_source_bangumi">Bangumi 番组计划</string>
+    <string name="cd_search">搜索</string>
+
+    <!-- ===== 错误详情（非 UI 层抛出） ===== -->
+    <string name="error_archive_too_many_entries">压缩包条目数超出限制：%1$d</string>
+    <string name="error_archive_extract_limit">解压数据超出 %1$d MB 限制</string>
+    <string name="error_archive_read_limit">读取数据超出 %1$d MB 限制</string>
+    <string name="error_archive_page_limit">页面解压后超过 %1$d MB 限制</string>
+    <string name="error_archive_central_dir_limit">ZIP 中央目录超过 %1$d MB 限制</string>
+    <string name="error_archive_entry_limit">ZIP 图片条目超过 %1$d MB 限制：%2$s</string>
+    <string name="error_archive_random_access">该漫画文件较大，但当前文件来源不支持随机读取；请使用系统文件选择器、内部存储或 SD 卡重新添加</string>
+    <string name="error_archive_open_failed">无法打开漫画文件</string>
+    <string name="error_cover_source_limit">封面源文件超过 64MB 限制</string>
+    <string name="error_cover_dir_invalid">封面缓存目录无效</string>
+    <string name="error_cover_dir_create_failed">无法创建封面缓存目录</string>
+    <string name="error_remote_id_invalid">远程漫画 ID 格式无效</string>
+    <string name="error_remote_page_limit">远程页面超过 %1$d MB 限制</string>
+    <string name="error_remote_total_pages">漫画页数超出限制：%1$d（最多 %2$d 页）</string>
+    <string name="error_remote_cache_path_invalid">远程漫画缓存路径无效</string>
+    <string name="error_remote_not_an_image">远程页面响应不是图片</string>
+    <string name="error_remote_invalid_image">远程页面不是有效图片或尺寸超出限制</string>
+    <string name="error_remote_cache_dir_failed">无法创建远程漫画缓存目录</string>
+    <string name="error_remote_cache_replace_failed">无法替换远程页面缓存</string>
+    <string name="error_remote_cache_commit_failed">无法提交远程页面缓存</string>
+    <string name="error_remote_request_failed">远程页面请求失败：HTTP %1$d</string>
+    <string name="error_remote_cache_quota_single">无法将单本远程漫画缓存压缩到安全配额内</string>
+    <string name="error_remote_cache_quota_total">无法将远程漫画总缓存压缩到安全配额内</string>
+    <string name="error_remote_detail_id_mismatch">远程漫画详情 ID 与请求不一致</string>
+    <string name="error_remote_library_too_many">远程书架条目过多：%1$d（最多 %2$d 本）</string>
+    <string name="error_remote_not_configured">未配置远程服务器 API 地址，请在设置中配置</string>
+    <string name="error_remote_not_ready">云端漫画尚未准备就绪，请稍后重试（当前解压任务可能仍在后台排队）</string>
+    <string name="error_remote_server_failed">服务端处理漫画失败</string>
+    <string name="error_public_http_rejected">拒绝向公网 HTTP 地址发送 Comix 请求</string>
+    <string name="error_comic_not_found">找不到 ID 为 [%1$s] 的漫画记录</string>
+    <string name="error_no_entity">未指定任何漫画实体</string>
+    <string name="error_no_pages">无法加载漫画页面，文件可能已损坏或暂不支持该格式</string>
+    <string name="error_no_space">手机存储空间不足，无法加载漫画</string>
+    <string name="error_file_missing">找不到漫画文件，请检查 SD 卡是否已卸载</string>
+    <string name="error_parse_failed">解析失败，可能是文件损坏或格式不支持</string>
+    <string name="error_unknown">未知错误</string>
+    <string name="error_sync_failed">同步失败：%1$s</string>
+    <string name="collection_default_name">新合集</string>
+
+    <!-- ===== 后台扫描进度 ===== -->
+    <string name="scan_no_authorized_dirs">未找到授权扫描的目录，请先添加挂载点</string>
+    <string name="scan_preparing">准备扫描 %1$d 个授权目录…</string>
+    <string name="scan_progress">同步进度：%1$d/%2$d — %3$s</string>
+    <string name="scan_cleanup">正在比对数据，清理物理剥离项…</string>
+    <string name="scan_done">同步结束！共校验 %1$d 本图鉴</string>
+    <string name="scan_done_with_removals">同步结束！共校验 %1$d 本图鉴，移除了 %2$d 本死链</string>
+    <string name="scan_scanning">正在扫描：%1$s</string>
+    <string name="scan_updating">正在更新：%1$s</string>
+    <string name="metadata_untitled">未命名</string>
+    <string name="update_section_title">应用更新</string>
+    <string name="update_auto_check">自动检查更新</string>
+    <string name="update_auto_check_desc">关闭后启动应用不会访问更新接口，仍可手动检查</string>
+    <string name="update_auto_check_on">自动检查已开启</string>
+    <string name="update_auto_check_off">自动检查已关闭</string>
+    <string name="update_current_version_label">当前版本：%1$s</string>
+    <string name="update_current_version">当前版本 %1$s</string>
+    <string name="update_up_to_date">当前已是最新版本</string>
+    <string name="update_checking">正在检查\u2026</string>
+    <string name="update_check_now">立即检查更新</string>
+    <string name="update_check_failed">检查失败：%1$s</string>
+    <string name="update_network_error">网络请求失败</string>
+    <string name="update_found_title">发现新版本 %1$s</string>
+    <string name="update_apk_size">APK 大小：%1$s</string>
+    <string name="update_download_apk">下载 APK</string>
+    <string name="update_enqueueing">正在处理\u2026</string>
+    <string name="update_later">稍后</string>
+    <string name="update_queued">已加入系统下载队列</string>
+    <string name="update_download_failed">下载失败：%1$s</string>
+    <string name="update_download_start_failed">无法启动下载</string>
+    <string name="update_notification_desc">下载完成后点击通知打开 APK</string>
+    <string name="error_update_http">GitHub Releases 返回 HTTP %1$d</string>
+    <string name="error_update_empty_version">发布版本号为空</string>
+    <string name="error_update_response_limit">更新响应超过大小限制</string>
+    <string name="error_endpoint_empty">API 地址不能为空</string>
+    <string name="error_endpoint_invalid">API 地址格式无效</string>
+    <string name="error_endpoint_query">API 地址不能包含查询参数或片段</string>
+    <string name="error_endpoint_https_required">公网服务器必须使用 HTTPS；HTTP 仅允许局域网地址</string>
+</resources>

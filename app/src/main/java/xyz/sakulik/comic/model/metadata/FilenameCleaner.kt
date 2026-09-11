@@ -24,6 +24,7 @@ object FilenameCleaner {
         cleaned = cleaned.replace(Regex("(?i)(vol\\.|v|chapter|ch\\.)\\s*\\d+", RegexOption.IGNORE_CASE), "")
         
         // 步骤三：移除常见冗余中文特征字词如 "完结", "短篇", "单行本"
+        // 这份词表是识别中文文件名的业务规则，不是 UI 文案，不可翻译或抽到 strings.xml。
         val extraneousWords = listOf("完结", "全集", "短篇", "单行本", "扫图")
         extraneousWords.forEach { word ->
             cleaned = cleaned.replace(word, "")

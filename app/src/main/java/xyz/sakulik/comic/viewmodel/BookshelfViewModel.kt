@@ -12,6 +12,10 @@ import kotlinx.coroutines.withContext
 import android.util.Log
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import xyz.sakulik.comic.R
+import xyz.sakulik.comic.utils.LocalizedIllegalStateException
+import xyz.sakulik.comic.utils.UiText
+import xyz.sakulik.comic.utils.toUiText
 import xyz.sakulik.comic.model.preferences.SettingsDataStore
 import xyz.sakulik.comic.model.db.ComicDao
 import xyz.sakulik.comic.model.db.ComicEntity
@@ -36,10 +40,10 @@ import java.io.File
 import java.util.UUID
 import android.content.Intent
 
-enum class SortOrder(val displayName: String) {
-    LAST_READ("上次阅读"),
-    ADDED_TIME("添加时间"),
-    TITLE_AZ("标题 (A-Z)")
+enum class SortOrder(@param:androidx.annotation.StringRes val labelRes: Int) {
+    LAST_READ(R.string.sort_last_read),
+    ADDED_TIME(R.string.sort_added_time),
+    TITLE_AZ(R.string.sort_title_az)
 }
 
 // ==== 数据组合体，代表合并后在 UI 中的堆叠文件夹 ====
@@ -395,7 +399,7 @@ class BookshelfViewModel(
                 xyz.sakulik.comic.model.metadata.MetadataScraper.autoScrape(getApplication(), comic)
                 _autoScrapeState.value = AutoScrapeState.Done(comic.id)
             } catch (e: Exception) {
-                _autoScrapeState.value = AutoScrapeState.Error(comic.id, e.localizedMessage ?: "未知错误")
+                _autoScrapeState.value = AutoScrapeState.Error(comic.id, e.toUiText())
             }
         }
     }
@@ -486,7 +490,7 @@ class BookshelfViewModel(
                 val baseUrl = SettingsDataStore.getComicApiBaseUrlFlow(context).firstOrNull()
                 if (baseUrl.isNullOrBlank()) {
                     Log.w("BookshelfSync", "API 地址为空，取消同步")
-                    _autoScrapeState.value = AutoScrapeState.Error(-1L, "请先设置远程服务器 API 地址")
+                    _autoScrapeState.value = AutoScrapeState.Error(-1L, UiText.Res(R.string.error_remote_not_configured))
                     return@launch
                 }
                 
@@ -500,8 +504,12 @@ class BookshelfViewModel(
 
                 val remoteComics = apiService.getComics()
                 if (remoteComics.size > RemoteResourceLimits.MAX_LIBRARY_ITEMS) {
-                    throw IllegalStateException(
-                        "远程书架条目过多: ${remoteComics.size}（最多 ${RemoteResourceLimits.MAX_LIBRARY_ITEMS} 本）"
+                    throw LocalizedIllegalStateException(
+                        UiText.Res(
+                            R.string.error_remote_library_too_many,
+                            listOf(remoteComics.size, RemoteResourceLimits.MAX_LIBRARY_ITEMS)
+                        ),
+                        "remote library item count out of range: ${remoteComics.size}"
                     )
                 }
                 val remoteIds = mutableSetOf<String>()
@@ -612,7 +620,10 @@ class BookshelfViewModel(
             } catch (e: Exception) {
                 Log.e("BookshelfSync", "同步失败: ${e.message}", e)
                 _isServerReachable.value = false // 同步失败，判定服务器不可达，更新状态以隐藏远程漫画
-                _autoScrapeState.value = AutoScrapeState.Error(-1L, "同步失败: ${e.localizedMessage}")
+                _autoScrapeState.value = AutoScrapeState.Error(
+                    -1L,
+                    UiText.Res(R.string.error_sync_failed, listOf(e.localizedMessage ?: ""))
+                )
             }
         }
     }
@@ -692,7 +703,7 @@ class BookshelfViewModel(
                     val suggestedName = when {
                         targetItem is BookshelfItem.SeriesGroup -> targetItem.group.seriesName
                         draggedItem is BookshelfItem.SeriesGroup -> draggedItem.group.seriesName
-                        else -> "新合集"
+                        else -> getApplication<Application>().getString(R.string.collection_default_name)
                     }
                     val newCollId = collectionDao.insertCollection(xyz.sakulik.comic.model.db.CollectionEntity(name = suggestedName))
                     val allComicIds = (draggedComicIds + targetComicIds).distinct()
@@ -758,5 +769,5 @@ sealed class AutoScrapeState {
     object Idle : AutoScrapeState()
     data class Loading(val comicId: Long) : AutoScrapeState()
     data class Done(val comicId: Long) : AutoScrapeState()
-    data class Error(val comicId: Long, val message: String) : AutoScrapeState()
+    data class Error(val comicId: Long, val text: UiText) : AutoScrapeState()
 }

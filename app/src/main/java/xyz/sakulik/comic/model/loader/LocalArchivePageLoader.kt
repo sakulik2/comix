@@ -23,6 +23,8 @@ import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 import kotlin.coroutines.coroutineContext
 import xyz.sakulik.comic.model.processor.ImageEnhanceEngine
+import xyz.sakulik.comic.R
+import xyz.sakulik.comic.utils.UiText
 
 import net.sf.sevenzipjbinding.IInArchive
 import net.sf.sevenzipjbinding.IInStream
@@ -317,7 +319,7 @@ class LocalArchivePageLoader(
                     val tempFile = File(sessionDir, "mirror_${System.currentTimeMillis()}.tmp")
                     pendingMirror = tempFile
                     val sourceStream = context.contentResolver.openInputStream(uri)
-                        ?: throw java.io.FileNotFoundException("无法打开漫画文件")
+                        ?: throw java.io.FileNotFoundException("cannot open comic file: $uri")
                     sourceStream.use { input ->
                         tempFile.outputStream().use { out ->
                             ArchiveResourceLimits.copyWithLimit(
@@ -392,7 +394,8 @@ class LocalArchivePageLoader(
                     val fSize = getUriSize(uri)
                     if (mirrorLimitExceeded || fSize > ArchiveResourceLimits.MAX_MIRROR_BYTES) {
                         throw ArchiveRandomAccessRequiredException(
-                            "该漫画文件较大，但当前文件来源不支持随机读取；请使用系统文件选择器、内部存储或 SD 卡重新添加"
+                            UiText.Res(R.string.error_archive_random_access),
+                            "large archive on a source without random access"
                         )
                     }
 
@@ -987,7 +990,13 @@ class LocalArchivePageLoader(
                         return ISequentialOutStream { data ->
                             written += data.size
                             if (written > ArchiveResourceLimits.MAX_PAGE_BYTES) {
-                                throw ArchiveLimitExceededException("页面解压后超过 96MB 限制")
+                                throw ArchiveLimitExceededException(
+                                    UiText.Res(
+                                        R.string.error_archive_page_limit,
+                                        listOf((ArchiveResourceLimits.MAX_PAGE_BYTES / 1024 / 1024).toInt())
+                                    ),
+                                    "decompressed page exceeds ${ArchiveResourceLimits.MAX_PAGE_BYTES} bytes"
+                                )
                             }
                             fos.write(data)
                             data.size
@@ -1245,18 +1254,24 @@ class LocalArchivePageLoader(
 
             ArchiveResourceLimits.requireEntryCount(totalEntries)
             if (cdSize < 0 || cdSize > ArchiveResourceLimits.MAX_CENTRAL_DIRECTORY_BYTES) {
-                throw ArchiveLimitExceededException("ZIP 中央目录超过 64MB 限制")
+                throw ArchiveLimitExceededException(
+                    UiText.Res(
+                        R.string.error_archive_central_dir_limit,
+                        listOf((ArchiveResourceLimits.MAX_CENTRAL_DIRECTORY_BYTES / 1024 / 1024).toInt())
+                    ),
+                    "ZIP central directory exceeds ${ArchiveResourceLimits.MAX_CENTRAL_DIRECTORY_BYTES} bytes"
+                )
             }
             val archiveSize = channel.size()
             if (cdOffset < 0 || cdOffset > archiveSize || cdSize > archiveSize - cdOffset) {
-                throw java.io.IOException("ZIP 中央目录偏移无效")
+                throw java.io.IOException("invalid ZIP central directory offset")
             }
 
             // 3. 解析 Central Directory
             channel.position(cdOffset)
             val cdBuf = ByteBuffer.allocate(cdSize.toInt()).order(ByteOrder.LITTLE_ENDIAN)
             while (cdBuf.hasRemaining()) {
-                if (channel.read(cdBuf) < 0) throw java.io.IOException("ZIP 中央目录不完整")
+                if (channel.read(cdBuf) < 0) throw java.io.IOException("truncated ZIP central directory")
             }
             cdBuf.flip()
 
@@ -1326,10 +1341,16 @@ class LocalArchivePageLoader(
                 }
 
                 if (localHeaderOffset < 0 || localHeaderOffset >= channel.size()) {
-                    throw java.io.IOException("ZIP 条目偏移无效: $name")
+                    throw java.io.IOException("invalid ZIP entry offset: $name")
                 }
                 if (isImage(name) && (compSize < 0 || compSize > ArchiveResourceLimits.MAX_PAGE_BYTES)) {
-                    throw ArchiveLimitExceededException("ZIP 图片条目超过 96MB 限制: $name")
+                    throw ArchiveLimitExceededException(
+                        UiText.Res(
+                            R.string.error_archive_entry_limit,
+                            listOf((ArchiveResourceLimits.MAX_PAGE_BYTES / 1024 / 1024).toInt(), name)
+                        ),
+                        "ZIP image entry exceeds ${ArchiveResourceLimits.MAX_PAGE_BYTES} bytes: $name"
+                    )
                 }
                 
                 entries[name] = ZipEntryMeta(localHeaderOffset, compSize)

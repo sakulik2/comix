@@ -22,7 +22,9 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import kotlinx.coroutines.launch
+import xyz.sakulik.comic.R
 
 /**
  * 支持缩放与平移的图片组件
@@ -152,7 +154,7 @@ fun ZoomableImage(
         // 底层重渲染，交托了所有状态挂载
         Image(
             bitmap = bitmap.asImageBitmap(),
-            contentDescription = "阅读主页画布",
+            contentDescription = stringResource(R.string.cd_reader_canvas),
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {

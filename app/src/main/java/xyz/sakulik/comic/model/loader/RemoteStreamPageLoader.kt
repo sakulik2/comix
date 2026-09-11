@@ -4,6 +4,8 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import xyz.sakulik.comic.model.processor.ImageEnhanceEngine
+import xyz.sakulik.comic.R
+import xyz.sakulik.comic.utils.UiText
 import okhttp3.Request
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.io.File
@@ -33,7 +35,10 @@ class RemoteStreamPageLoader(
         .toHttpUrl()
     private val cacheDir = RemoteResourceLimits.resolveComicCacheDirectory(context.cacheDir, safeComicId).apply {
         if (!exists() && !mkdirs()) {
-            throw IllegalStateException("无法创建远程漫画缓存目录")
+            throw RemoteResourceLimitException(
+                UiText.Res(R.string.error_remote_cache_dir_failed),
+                "cannot create remote comic cache directory"
+            )
         }
     }
     private val dimensionsCache = ConcurrentHashMap<Int, Pair<Int, Int>>()
@@ -48,7 +53,7 @@ class RemoteStreamPageLoader(
                 cacheDir.setLastModified(System.currentTimeMillis())
             }
         } catch (e: Exception) {
-            android.util.Log.e("RemoteLoader", "触摸缓存目录失败", e)
+            android.util.Log.e("RemoteLoader", "failed to touch cache directory", e)
         }
     }
 
@@ -128,26 +133,42 @@ class RemoteStreamPageLoader(
                     200 -> {
                         val responseBody = response.body ?: return
                         if (responseBody.contentType()?.type != "image") {
-                            throw RemoteResourceLimitException("远程页面响应不是图片")
+                            throw RemoteResourceLimitException(
+                                UiText.Res(R.string.error_remote_not_an_image),
+                                "remote page response is not an image"
+                            )
                         }
                         val contentLength = responseBody.contentLength()
                         if (contentLength > RemoteResourceLimits.MAX_PAGE_BYTES) {
                             throw RemoteResourceLimitException(
-                                "远程页面超过 ${RemoteResourceLimits.MAX_PAGE_BYTES / 1024 / 1024}MB 限制"
+                                UiText.Res(
+                                        R.string.error_remote_page_limit,
+                                        listOf((RemoteResourceLimits.MAX_PAGE_BYTES / 1024 / 1024).toInt())
+                                    ),
+                                    "remote page exceeds ${RemoteResourceLimits.MAX_PAGE_BYTES} bytes"
                             )
                         }
                         tmpFile.outputStream().use { out ->
                             RemoteResourceLimits.copyPageWithLimit(responseBody.byteStream(), out)
                         }
                         if (!isValidImageFile(tmpFile)) {
-                            throw RemoteResourceLimitException("远程页面不是有效图片或尺寸超出限制")
+                            throw RemoteResourceLimitException(
+                                UiText.Res(R.string.error_remote_invalid_image),
+                                "remote page is not a valid image or is oversized"
+                            )
                         }
                         RemoteCacheManager.trim(context, cacheDir, setOf(tmpFile))
                         if (targetFile.exists() && !targetFile.delete()) {
-                            throw IllegalStateException("无法替换远程页面缓存")
+                            throw RemoteResourceLimitException(
+                                UiText.Res(R.string.error_remote_cache_replace_failed),
+                                "cannot replace remote page cache"
+                            )
                         }
                         if (!tmpFile.renameTo(targetFile)) {
-                            throw IllegalStateException("无法提交远程页面缓存")
+                            throw RemoteResourceLimitException(
+                                UiText.Res(R.string.error_remote_cache_commit_failed),
+                                "cannot commit remote page cache"
+                            )
                         }
                         targetFile.setLastModified(System.currentTimeMillis())
                         cacheDir.setLastModified(System.currentTimeMillis())
@@ -156,7 +177,10 @@ class RemoteStreamPageLoader(
                     202 -> {
                         android.util.Log.i("RemoteLoader", "Page $pageIndex is still processing on server")
                     }
-                    else -> throw java.io.IOException("远程页面请求失败: HTTP ${response.code}")
+                    else -> throw RemoteResourceLimitException(
+                        UiText.Res(R.string.error_remote_request_failed, listOf(response.code)),
+                        "remote page request failed: HTTP ${response.code}"
+                    )
                 }
             }
         } catch (e: Exception) {

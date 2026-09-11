@@ -1,3 +1,268 @@
 <resources>
-    <string name="app_name">comix</string>
+    <string name="app_name" translatable="false">comix</string>
+
+    <!-- ===== 通用 ===== -->
+    <string name="common_ok">OK</string>
+    <string name="common_cancel">Cancel</string>
+    <string name="common_save">Save</string>
+    <string name="common_back">Back</string>
+    <string name="common_create">Create</string>
+    <string name="common_rename">Rename</string>
+    <string name="common_remove">Remove</string>
+    <string name="common_set_as_cover">Set as cover</string>
+    <string name="common_summary">Summary</string>
+    <string name="common_settings">Settings</string>
+    <string name="common_unknown">Unknown</string>
+
+    <!-- ===== 书架 ===== -->
+    <string name="bookshelf_title">My Library</string>
+    <string name="bookshelf_search_hint">Search your library…</string>
+    <string name="bookshelf_empty_title">Your library is empty</string>
+    <string name="bookshelf_empty_hint">Tap the button in the corner to add a comic folder</string>
+    <string name="bookshelf_scrape_done">✅ Metadata updated</string>
+    <string name="bookshelf_scrape_failed">❌ %1$s</string>
+    <string name="bookshelf_no_summary">No summary available</string>
+    <plurals name="bookshelf_volume_count">
+        <item quantity="one">%d volume</item>
+        <item quantity="other">%d volumes</item>
+    </plurals>
+
+    <!-- 地区筛选 tab -->
+    <string name="region_all">All</string>
+    <string name="region_comic">Comics</string>
+    <string name="region_manga">Manga</string>
+    <string name="region_unknown">Uncategorized</string>
+
+    <!-- 排序 -->
+    <string name="sort_last_read">Last read</string>
+    <string name="sort_added_time">Date added</string>
+    <string name="sort_title_az">Title (A-Z)</string>
+
+    <!-- 添加菜单 -->
+    <string name="bookshelf_add_local">Local</string>
+    <string name="bookshelf_sync">Sync</string>
+    <string name="cd_toggle_add_menu">Toggle add menu</string>
+    <string name="cd_scan_all">Scan all folders</string>
+    <string name="cd_sort">Sort</string>
+
+    <!-- 合集 -->
+    <string name="collection_section_title">My Collections</string>
+    <string name="collection_new">New collection</string>
+    <string name="collection_name_label">Collection name</string>
+    <string name="collection_add_to">Add to collection</string>
+    <string name="collection_none_yet">You haven\'t created any collections yet</string>
+    <string name="collection_manage">Manage collection</string>
+    <string name="collection_delete">Delete collection</string>
+    <string name="collection_delete_confirm">Delete the collection “%1$s”? The comics inside will not be deleted.</string>
+    <string name="collection_delete_action">Delete</string>
+    <string name="bookshelf_drag_to_group">Drop to group…</string>
+
+    <!-- 详情底部面板 -->
+    <string name="action_read">Read</string>
+    <string name="action_reset">Reset</string>
+    <string name="action_scrape">Scrape</string>
+    <string name="action_collection">Collection</string>
+    <string name="action_details">Details</string>
+    <string name="metadata_advanced">Advanced metadata</string>
+    <string name="metadata_edit_fields">Edit fields manually</string>
+    <string name="metadata_search_manual">Search metadata manually</string>
+    <string name="bookshelf_advanced_options">Advanced options</string>
+    <string name="bookshelf_remove_from_library">Remove from library only</string>
+    <string name="bookshelf_remove_from_library_hint">Keeps the file, clears the database record</string>
+    <string name="bookshelf_delete_file">Delete file permanently</string>
+    <string name="bookshelf_delete_file_hint">Warning: erased from disk, cannot be undone</string>
+
+    <!-- 元数据详情 -->
+    <string name="metadata_remark">Display name</string>
+    <string name="metadata_original_title">Original title</string>
+    <string name="metadata_series">Series</string>
+    <string name="metadata_year">Year</string>
+    <string name="metadata_publisher">Publisher</string>
+    <string name="metadata_authors">Authors</string>
+    <string name="metadata_genres">Genres</string>
+    <string name="metadata_rating">Rating</string>
+    <string name="metadata_pages">Pages</string>
+    <string name="metadata_page_count_value">%1$d pages</string>
+    <string name="metadata_path">Path</string>
+
+    <!-- 元数据编辑 -->
+    <string name="editor_title">Edit details</string>
+    <string name="editor_extract_from_filename">Extract title from filename</string>
+    <string name="editor_remark">Display name</string>
+    <string name="editor_series">Series</string>
+    <string name="editor_year">Year</string>
+    <string name="editor_authors">Authors</string>
+
+    <!-- 系列详情 -->
+    <string name="series_collected">Collected editions</string>
+    <string name="series_issues">Issues</string>
+
+    <!-- 远程 API 对话框 -->
+    <string name="remote_dialog_title">Remote API address</string>
+    <string name="remote_dialog_hint">Enter the base URL of a Comix-compatible server:</string>
+    <string name="remote_token_label">Access token</string>
+    <string name="remote_token_hint">Leave empty to skip authentication</string>
+    <string name="remote_https_notice">Public addresses must use HTTPS. On a LAN, HTTP works but the token is sent in plain text.</string>
+    <string name="remote_cleartext_warning">⚠️ LAN HTTP sends the token in plain text</string>
+
+    <!-- ===== 阅读器 ===== -->
+    <string name="reader_reload_page">Reload current page</string>
+    <string name="reader_reloading">Reloading current page…</string>
+    <string name="reader_cover_updated">Cover updated and metadata synced</string>
+    <string name="reader_sharpen_on">Enhance image quality</string>
+    <string name="reader_sharpen_off">Disable image enhancement</string>
+    <string name="reader_sharpen_enabled">Image enhancement on, current page reprocessed</string>
+    <string name="reader_sharpen_disabled">Image enhancement off</string>
+    <string name="reader_rescrape">Search metadata again</string>
+    <string name="reader_rtl">Right-to-left paging</string>
+    <string name="reader_volume_key">Volume key paging</string>
+    <string name="reader_jump_title">Jump to page</string>
+    <string name="reader_jump_hint">Page number (1 - %1$d)</string>
+    <string name="cd_toggle_reader_mode">Switch reading mode</string>
+    <string name="cd_more_options">More options</string>
+    <string name="cd_reader_canvas">Reader canvas</string>
+
+    <!-- 页面加载 -->
+    <string name="page_load_failed">Failed to load</string>
+    <string name="page_load_failed_retry">Failed to load. Tap to retry.</string>
+    <string name="cd_comic_page">Comic page</string>
+    <string name="cd_remote_comic_page">Remote comic page</string>
+
+    <!-- ===== 错误页 ===== -->
+    <string name="error_title">Can\'t open this comic</string>
+    <string name="error_details">DETAILS</string>
+    <string name="error_causes">POSSIBLE CAUSES</string>
+    <string name="error_cause_format">Unsupported format (only CBZ / CBR / PDF)</string>
+    <string name="error_cause_corrupt">The file is damaged or incomplete</string>
+    <string name="error_cause_permission">Storage access was revoked</string>
+    <string name="error_cause_moved">The file was moved or renamed</string>
+    <string name="error_back_to_library">Back to library</string>
+
+    <!-- ===== 设置 ===== -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_section_security">Security &amp; credentials</string>
+    <string name="settings_api_key_saved">✅ API key saved</string>
+    <string name="settings_save_credentials">Save credentials</string>
+    <string name="settings_section_remote">Remote library</string>
+    <string name="settings_remote_enable">Enable remote sync</string>
+    <string name="settings_remote_enable_hint">When off, the sync button and all remote comics are hidden</string>
+    <string name="settings_token_hint">Leave empty if the server has no token</string>
+    <string name="settings_https_notice">Public addresses must use HTTPS. On a LAN, HTTP works but the token is sent in plain text.</string>
+    <string name="settings_saved_cleartext">⚠️ Saved. LAN HTTP sends the token in plain text.</string>
+    <string name="settings_remote_saved">✅ Remote settings saved</string>
+    <string name="settings_save_remote">Save remote settings</string>
+    <string name="settings_url_required">❌ Enter the API base URL first</string>
+    <string name="settings_test_url_failed">❌ Could not build a test URL</string>
+    <string name="settings_conn_ok">✅ Connected. Server %1$s, protocol v%2$d</string>
+    <string name="settings_conn_bad_format">⚠️ Connected, but the response format is unexpected</string>
+    <string name="settings_conn_unauthorized">❌ Authentication failed: wrong or missing API token</string>
+    <string name="settings_conn_failed_code">❌ Connection failed, status %1$d</string>
+    <string name="settings_conn_error">❌ Can\'t reach the server: %1$s</string>
+    <string name="settings_test_connection">Test server connection</string>
+    <string name="settings_danger_zone">Danger zone</string>
+    <string name="settings_clear_remote">Clear all remote library records</string>
+    <string name="settings_clear_remote_hint">This cannot be undone. Removes remote comic records from the local database.</string>
+    <string name="settings_section_scraper">Metadata scraper</string>
+    <string name="settings_metadata_enable">Enable smart metadata</string>
+    <string name="settings_metadata_enable_hint">When off, series grouping stops and raw filenames are shown</string>
+    <string name="settings_section_storage">Storage</string>
+    <string name="settings_auto_clear_covers">Clear covers on startup</string>
+    <string name="settings_auto_clear_covers_hint">Minimal footprint mode: the cover cache is reset every launch</string>
+    <string name="settings_cache_cleared">✅ All caches and covers cleared</string>
+    <string name="settings_clear_cache">Clear all app caches</string>
+    <string name="settings_error_prefix">❌ %1$s</string>
+
+    <!-- ===== 刮削 ===== -->
+    <string name="scrape_smart_fallback">Smart (both sources)</string>
+    <string name="scrape_comic_vine_only">ComicVine only</string>
+    <string name="scrape_bangumi_only">Bangumi only</string>
+    <string name="scrape_search_series">Search series</string>
+    <string name="scrape_pick_issue">Pick an issue</string>
+    <string name="scrape_search_hint">Type a keyword to search series…</string>
+    <string name="scrape_strategy">Search strategy</string>
+    <string name="scrape_browsing_series">Browsing every issue in “%1$s”</string>
+    <string name="scrape_no_series_found">No series found. Try a different keyword.</string>
+    <string name="scrape_no_issues_found">No matching issues in this series</string>
+    <string name="scrape_source_comic_vine">ComicVine database</string>
+    <string name="scrape_source_bangumi">Bangumi</string>
+    <string name="cd_search">Search</string>
+
+    <!-- ===== 错误详情（非 UI 层抛出） ===== -->
+    <string name="error_archive_too_many_entries">This archive has too many entries (%1$d).</string>
+    <string name="error_archive_extract_limit">Extracted data exceeds the %1$d MB limit.</string>
+    <string name="error_archive_read_limit">Read data exceeds the %1$d MB limit.</string>
+    <string name="error_archive_page_limit">This page exceeds the %1$d MB limit after decompression.</string>
+    <string name="error_archive_central_dir_limit">The ZIP central directory exceeds the %1$d MB limit.</string>
+    <string name="error_archive_entry_limit">A ZIP image entry exceeds the %1$d MB limit: %2$s</string>
+    <string name="error_archive_random_access">This file is large but its source does not support random access. Re-add it through the system file picker, internal storage, or an SD card.</string>
+    <string name="error_archive_open_failed">Can\'t open the comic file.</string>
+    <string name="error_cover_source_limit">The cover source file exceeds the 64 MB limit.</string>
+    <string name="error_cover_dir_invalid">The cover cache directory is invalid.</string>
+    <string name="error_cover_dir_create_failed">Can\'t create the cover cache directory.</string>
+    <string name="error_remote_id_invalid">Invalid remote comic ID.</string>
+    <string name="error_remote_page_limit">Remote page exceeds the %1$d MB limit.</string>
+    <string name="error_remote_total_pages">Too many pages: %1$d (limit is %2$d).</string>
+    <string name="error_remote_cache_path_invalid">Invalid remote comic cache path.</string>
+    <string name="error_remote_not_an_image">The remote page is not an image.</string>
+    <string name="error_remote_invalid_image">The remote page is not a valid image, or is too large.</string>
+    <string name="error_remote_cache_dir_failed">Can\'t create the remote comic cache directory.</string>
+    <string name="error_remote_cache_replace_failed">Can\'t replace the remote page cache.</string>
+    <string name="error_remote_cache_commit_failed">Can\'t commit the remote page cache.</string>
+    <string name="error_remote_request_failed">Remote page request failed: HTTP %1$d</string>
+    <string name="error_remote_cache_quota_single">Can\'t shrink this comic\'s cache into the safe quota.</string>
+    <string name="error_remote_cache_quota_total">Can\'t shrink the total remote cache into the safe quota.</string>
+    <string name="error_remote_detail_id_mismatch">The remote comic details do not match the request.</string>
+    <string name="error_remote_library_too_many">Too many items on the remote shelf: %1$d (limit is %2$d).</string>
+    <string name="error_remote_not_configured">No remote server API address is configured. Set one in Settings.</string>
+    <string name="error_remote_not_ready">The remote comic is not ready yet. Try again shortly; extraction may still be queued.</string>
+    <string name="error_remote_server_failed">The server failed to process the comic.</string>
+    <string name="error_public_http_rejected">Refusing to send a Comix request to a public HTTP address.</string>
+    <string name="error_comic_not_found">No comic record found for ID [%1$s].</string>
+    <string name="error_no_entity">No comic was specified.</string>
+    <string name="error_no_pages">Can\'t load any pages. The file may be damaged or unsupported.</string>
+    <string name="error_no_space">Not enough storage on this device to load the comic.</string>
+    <string name="error_file_missing">Comic file not found. Check whether the SD card was unmounted.</string>
+    <string name="error_parse_failed">Parsing failed. The file may be damaged or in an unsupported format.</string>
+    <string name="error_unknown">Unknown error</string>
+    <string name="error_sync_failed">Sync failed: %1$s</string>
+    <string name="collection_default_name">New collection</string>
+
+    <!-- ===== 后台扫描进度 ===== -->
+    <string name="scan_no_authorized_dirs">No authorized folders found. Add a mount point first.</string>
+    <string name="scan_preparing">Preparing to scan %1$d authorized folders…</string>
+    <string name="scan_progress">Syncing %1$d/%2$d — %3$s</string>
+    <string name="scan_cleanup">Comparing records and clearing missing files…</string>
+    <string name="scan_done">Sync complete. %1$d comics checked.</string>
+    <string name="scan_done_with_removals">Sync complete. %1$d comics checked, %2$d dead links removed.</string>
+    <string name="scan_scanning">Scanning: %1$s</string>
+    <string name="scan_updating">Updating: %1$s</string>
+    <string name="metadata_untitled">Untitled</string>
+    <string name="update_section_title">App updates</string>
+    <string name="update_auto_check">Check for updates automatically</string>
+    <string name="update_auto_check_desc">When off, the app never contacts the update endpoint on launch. Manual checks still work.</string>
+    <string name="update_auto_check_on">Automatic checks enabled</string>
+    <string name="update_auto_check_off">Automatic checks disabled</string>
+    <string name="update_current_version_label">Current version: %1$s</string>
+    <string name="update_current_version">Current version %1$s</string>
+    <string name="update_up_to_date">Already on the latest version</string>
+    <string name="update_checking">Checking\u2026</string>
+    <string name="update_check_now">Check for updates</string>
+    <string name="update_check_failed">Check failed: %1$s</string>
+    <string name="update_network_error">Network request failed</string>
+    <string name="update_found_title">Version %1$s available</string>
+    <string name="update_apk_size">APK size: %1$s</string>
+    <string name="update_download_apk">Download APK</string>
+    <string name="update_enqueueing">Working\u2026</string>
+    <string name="update_later">Later</string>
+    <string name="update_queued">Added to the system download queue</string>
+    <string name="update_download_failed">Download failed: %1$s</string>
+    <string name="update_download_start_failed">Could not start the download</string>
+    <string name="update_notification_desc">Tap the notification when the download finishes to open the APK</string>
+    <string name="error_update_http">GitHub Releases returned HTTP %1$d</string>
+    <string name="error_update_empty_version">The release has no version number</string>
+    <string name="error_update_response_limit">The update response exceeded the size limit</string>
+    <string name="error_endpoint_empty">The API address cannot be empty</string>
+    <string name="error_endpoint_invalid">The API address is not a valid URL</string>
+    <string name="error_endpoint_query">The API address cannot contain a query string or fragment</string>
+    <string name="error_endpoint_https_required">Public servers must use HTTPS. Plain HTTP is only allowed for LAN addresses.</string>
 </resources>

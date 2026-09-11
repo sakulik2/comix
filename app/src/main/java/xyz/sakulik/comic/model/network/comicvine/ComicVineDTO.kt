@@ -47,7 +47,7 @@ data class ComicVineSearchResultItem(
                 year = startYear
             )
         } else {
-            val titleStr = name ?: "未知标题"
+            val titleStr = name ?: ""
             val titleLower = titleStr.lowercase()
             val parsedFormat = when {
                 titleLower.contains("tpb") || titleLower.contains("trade paperback") || titleLower.contains("vol") -> ComicFormat.TPB
@@ -92,7 +92,7 @@ data class ComicVineVolume(
      * 将第三方脏数据防腐转换为统一领域模型
      */
     fun toDomainModel(): ScrapedComicInfo {
-        val titleStr = name ?: "未知标题"
+        val titleStr = name ?: ""
         val titleLower = titleStr.lowercase()
         
         val parsedFormat = when {

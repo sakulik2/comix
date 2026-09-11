@@ -39,6 +39,8 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.graphics.BlurEffect
@@ -47,6 +49,8 @@ import androidx.compose.ui.unit.sp
 import xyz.sakulik.comic.ui.components.DragDropFolderBox
 import xyz.sakulik.comic.ui.components.dragAndDropTarget
 import xyz.sakulik.comic.R
+import xyz.sakulik.comic.utils.resolve
+import xyz.sakulik.comic.utils.toUiText
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -84,16 +88,20 @@ fun BookshelfScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     val snackbarScope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // 协程内无法调用 stringResource，先在 Composable 作用域取出
+    val msgScrapeDone = stringResource(R.string.bookshelf_scrape_done)
+    val msgCleartextWarning = stringResource(R.string.remote_cleartext_warning)
 
     // 状态反馈监听
     LaunchedEffect(autoScrapeState) {
         when (val state = autoScrapeState) {
             is AutoScrapeState.Done -> {
-                snackbarHostState.showSnackbar("✅ 元数据已更新！", duration = SnackbarDuration.Short)
+                snackbarHostState.showSnackbar(msgScrapeDone, duration = SnackbarDuration.Short)
                 viewModel.clearScrapeState()
             }
             is AutoScrapeState.Error -> {
-                snackbarHostState.showSnackbar("❌ ${state.message}", duration = SnackbarDuration.Short)
+                snackbarHostState.showSnackbar(context.getString(R.string.bookshelf_scrape_failed, state.text.resolve(context)), duration = SnackbarDuration.Short)
                 viewModel.clearScrapeState()
             }
             else -> {}
@@ -111,16 +119,16 @@ fun BookshelfScreen(
         topBar = {
             Column {
                 TopAppBar(
-                    title = { Text("我的漫库") },
+                    title = { Text(stringResource(R.string.bookshelf_title)) },
                     actions = {
                         IconButton(onClick = onSettingsClick) {
-                            Icon(Icons.Default.Settings, contentDescription = "设置")
+                            Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.common_settings))
                         }
                         IconButton(onClick = { viewModel.scanAllFolders() }) {
-                            Icon(Icons.Default.Refresh, contentDescription = "全局扫描同步")
+                            Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.cd_scan_all))
                         }
                         IconButton(onClick = { showSortMenu = true }) {
-                            Icon(Icons.AutoMirrored.Filled.List, contentDescription = "排序")
+                            Icon(Icons.AutoMirrored.Filled.List, contentDescription = stringResource(R.string.cd_sort))
                         }
                         DropdownMenu(
                             expanded = showSortMenu,
@@ -128,7 +136,7 @@ fun BookshelfScreen(
                         ) {
                             SortOrder.entries.forEach { order ->
                                 DropdownMenuItem(
-                                    text = { Text(order.displayName) },
+                                    text = { Text(stringResource(order.labelRes)) },
                                     onClick = {
                                         viewModel.onSortOrderChanged(order)
                                         showSortMenu = false
@@ -149,10 +157,10 @@ fun BookshelfScreen(
                     containerColor = MaterialTheme.colorScheme.surface,
                     divider = {}
                 ) {
-                    Tab(selected = selectedRegion == null, onClick = { viewModel.setRegionFilter(null) }, text = { Text("全部") })
-                    Tab(selected = selectedRegion == ComicRegion.COMIC, onClick = { viewModel.setRegionFilter(ComicRegion.COMIC) }, text = { Text("美漫") })
-                    Tab(selected = selectedRegion == ComicRegion.MANGA, onClick = { viewModel.setRegionFilter(ComicRegion.MANGA) }, text = { Text("日漫") })
-                    Tab(selected = selectedRegion == ComicRegion.UNKNOWN, onClick = { viewModel.setRegionFilter(ComicRegion.UNKNOWN) }, text = { Text("未分类") })
+                    Tab(selected = selectedRegion == null, onClick = { viewModel.setRegionFilter(null) }, text = { Text(stringResource(R.string.region_all)) })
+                    Tab(selected = selectedRegion == ComicRegion.COMIC, onClick = { viewModel.setRegionFilter(ComicRegion.COMIC) }, text = { Text(stringResource(R.string.region_comic)) })
+                    Tab(selected = selectedRegion == ComicRegion.MANGA, onClick = { viewModel.setRegionFilter(ComicRegion.MANGA) }, text = { Text(stringResource(R.string.region_manga)) })
+                    Tab(selected = selectedRegion == ComicRegion.UNKNOWN, onClick = { viewModel.setRegionFilter(ComicRegion.UNKNOWN) }, text = { Text(stringResource(R.string.region_unknown)) })
                 }
             }
         },
@@ -181,7 +189,7 @@ fun BookshelfScreen(
                                 showCreateCollectionDialog = true
                             },
                             icon = { Icon(Icons.Default.CreateNewFolder, null) },
-                            text = { Text("新建合集") },
+                            text = { Text(stringResource(R.string.collection_new)) },
                             containerColor = MaterialTheme.colorScheme.primaryContainer,
                             contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                         )
@@ -198,7 +206,7 @@ fun BookshelfScreen(
                                 },
                                 text = { 
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text("同步")
+                                        Text(stringResource(R.string.bookshelf_sync))
                                         Spacer(Modifier.width(8.dp))
                                         IconButton(
                                             onClick = { 
@@ -221,7 +229,7 @@ fun BookshelfScreen(
                                 launcher.launch(null) 
                             },
                             icon = { Icon(painterResource(R.drawable.ic_folder), null) },
-                            text = { Text("本地") },
+                            text = { Text(stringResource(R.string.bookshelf_add_local)) },
                             containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                             contentColor = MaterialTheme.colorScheme.onTertiaryContainer
                         )
@@ -234,7 +242,7 @@ fun BookshelfScreen(
                 ) {
                     Icon(
                         if (showAddMenu) Icons.Default.Close else Icons.Default.Add,
-                        contentDescription = "切换添加模式"
+                        contentDescription = stringResource(R.string.cd_toggle_add_menu)
                     )
                 }
             }
@@ -252,7 +260,7 @@ fun BookshelfScreen(
                     value = searchQuery,
                     onValueChange = viewModel::onSearchQueryChanged,
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    placeholder = { Text("搜索您的收藏...") },
+                    placeholder = { Text(stringResource(R.string.bookshelf_search_hint)) },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                     singleLine = true,
                     shape = RoundedCornerShape(100)
@@ -268,8 +276,8 @@ fun BookshelfScreen(
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(80.dp), tint = MaterialTheme.colorScheme.outlineVariant)
                             Spacer(Modifier.height(16.dp))
-                            Text("漫库目前是空的", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.outline)
-                            Text("点击右下角按钮添加您的漫画文件夹", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
+                            Text(stringResource(R.string.bookshelf_empty_title), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.outline)
+                            Text(stringResource(R.string.bookshelf_empty_hint), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
                         }
                     }
                 } else {
@@ -290,7 +298,7 @@ fun BookshelfScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            "我的合集",
+                                            stringResource(R.string.collection_section_title),
                                             style = MaterialTheme.typography.titleMedium,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -298,7 +306,7 @@ fun BookshelfScreen(
                                             onClick = { showCreateCollectionDialog = true },
                                             modifier = Modifier.size(24.dp)
                                         ) {
-                                            Icon(Icons.Default.Add, contentDescription = "新建合集")
+                                            Icon(Icons.Default.Add, contentDescription = stringResource(R.string.collection_new))
                                         }
                                     }
                                     LazyRow(
@@ -421,7 +429,7 @@ fun BookshelfScreen(
                 // [内容区域]
                 Column(modifier = Modifier.padding(horizontal = 24.dp)) {
                     if (!comic.summary.isNullOrBlank()) {
-                        Text(text = "剧情简介", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Text(text = stringResource(R.string.common_summary), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         Text(
                             text = comic.summary,
                             style = MaterialTheme.typography.bodyMedium,
@@ -438,11 +446,11 @@ fun BookshelfScreen(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
-                        QuickActionItem(Icons.Default.PlayArrow, "阅读", MaterialTheme.colorScheme.primary) { onComicClick(comic); contextComic = null }
-                        QuickActionItem(Icons.Default.Refresh, "重置", MaterialTheme.colorScheme.error) { viewModel.resetComicProgress(comic); contextComic = null }
-                        QuickActionItem(Icons.Default.AutoAwesome, "刮削", MaterialTheme.colorScheme.secondary) { viewModel.autoScrape(comic); contextComic = null }
-                        QuickActionItem(Icons.Default.LibraryAdd, "合集", MaterialTheme.colorScheme.tertiary) { showAddToCollectionDialog = comic; contextComic = null }
-                        QuickActionItem(Icons.Default.Info, "详情", MaterialTheme.colorScheme.outline) { showMetadataDialog = comic; contextComic = null }
+                        QuickActionItem(Icons.Default.PlayArrow, stringResource(R.string.action_read), MaterialTheme.colorScheme.primary) { onComicClick(comic); contextComic = null }
+                        QuickActionItem(Icons.Default.Refresh, stringResource(R.string.action_reset), MaterialTheme.colorScheme.error) { viewModel.resetComicProgress(comic); contextComic = null }
+                        QuickActionItem(Icons.Default.AutoAwesome, stringResource(R.string.action_scrape), MaterialTheme.colorScheme.secondary) { viewModel.autoScrape(comic); contextComic = null }
+                        QuickActionItem(Icons.Default.LibraryAdd, stringResource(R.string.action_collection), MaterialTheme.colorScheme.tertiary) { showAddToCollectionDialog = comic; contextComic = null }
+                        QuickActionItem(Icons.Default.Info, stringResource(R.string.action_details), MaterialTheme.colorScheme.outline) { showMetadataDialog = comic; contextComic = null }
                     }
 
                     // 元数据深度管理区 (折叠)
@@ -453,7 +461,7 @@ fun BookshelfScreen(
                     ) {
                         Column {
                             ListItem(
-                                headlineContent = { Text("元数据深度管理", style = MaterialTheme.typography.labelLarge) },
+                                headlineContent = { Text(stringResource(R.string.metadata_advanced), style = MaterialTheme.typography.labelLarge) },
                                 trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, modifier = Modifier.size(16.dp)) },
                                 modifier = Modifier.clickable { showMetadataOptions = !showMetadataOptions },
                                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -462,13 +470,13 @@ fun BookshelfScreen(
                             if (showMetadataOptions) {
                                 Column(modifier = Modifier.padding(bottom = 8.dp)) {
                                     ListItem(
-                                        headlineContent = { Text("手动编辑字段", style = MaterialTheme.typography.bodyMedium) },
+                                        headlineContent = { Text(stringResource(R.string.metadata_edit_fields), style = MaterialTheme.typography.bodyMedium) },
                                         leadingContent = { Icon(Icons.Default.EditNote, null, modifier = Modifier.size(20.dp)) },
                                         modifier = Modifier.clickable { showEditorDialog = comic; contextComic = null },
                                         colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                                     )
                                     ListItem(
-                                        headlineContent = { Text("手动搜索元数据", style = MaterialTheme.typography.bodyMedium) },
+                                        headlineContent = { Text(stringResource(R.string.metadata_search_manual), style = MaterialTheme.typography.bodyMedium) },
                                         leadingContent = { Icon(Icons.AutoMirrored.Filled.ManageSearch, null, modifier = Modifier.size(20.dp)) },
                                         modifier = Modifier.clickable { onManualScrapeClick(comic); contextComic = null },
                                         colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -489,7 +497,7 @@ fun BookshelfScreen(
                         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error)
                             Spacer(Modifier.width(12.dp))
-                            Text(text = "高级管理选项", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.error)
+                            Text(text = stringResource(R.string.bookshelf_advanced_options), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.error)
                             Spacer(Modifier.weight(1f))
                             Icon(if (showDeleteOptions) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.error)
                         }
@@ -499,8 +507,8 @@ fun BookshelfScreen(
                         Column(modifier = Modifier.padding(top = 8.dp)) {
                             // 选项 1: 仅从书架移除 (安全操作)
                             ListItem(
-                                headlineContent = { Text("仅从书架移除", color = MaterialTheme.colorScheme.error) },
-                                supportingContent = { Text("保留本地文件，仅清除数据库记录", style = MaterialTheme.typography.labelSmall) },
+                                headlineContent = { Text(stringResource(R.string.bookshelf_remove_from_library), color = MaterialTheme.colorScheme.error) },
+                                supportingContent = { Text(stringResource(R.string.bookshelf_remove_from_library_hint), style = MaterialTheme.typography.labelSmall) },
                                 leadingContent = { Icon(Icons.Default.FolderDelete, null, tint = MaterialTheme.colorScheme.error) },
                                 modifier = Modifier.clickable { 
                                     viewModel.deleteComic(comic)
@@ -513,8 +521,8 @@ fun BookshelfScreen(
                             // 选项 2: 彻底删除物理文件 (仅限本地漫画)
                             if (comic.source == ComicSource.LOCAL) {
                                 ListItem(
-                                    headlineContent = { Text("彻底删除物理文件", color = MaterialTheme.colorScheme.error) },
-                                    supportingContent = { Text("警告：将从磁盘永久删除，不可恢复", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)) },
+                                    headlineContent = { Text(stringResource(R.string.bookshelf_delete_file), color = MaterialTheme.colorScheme.error) },
+                                    supportingContent = { Text(stringResource(R.string.bookshelf_delete_file_hint), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)) },
                                     leadingContent = { Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error) },
                                     modifier = Modifier.clickable { viewModel.deleteComicAndFile(comic); contextComic = null },
                                     colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -539,10 +547,10 @@ fun BookshelfScreen(
         
         AlertDialog(
             onDismissRequest = { showApiDialog = false },
-            title = { Text("添加远程 API 地址", style = MaterialTheme.typography.titleMedium) },
+            title = { Text(stringResource(R.string.remote_dialog_title), style = MaterialTheme.typography.titleMedium) },
             text = {
                 Column {
-                    Text("请输入符合 Comix 规范的流媒体 API 基址：", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    Text(stringResource(R.string.remote_dialog_hint), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = inputUrl,
@@ -553,19 +561,19 @@ fun BookshelfScreen(
                         leadingIcon = { Icon(painterResource(id = xyz.sakulik.comic.R.drawable.ic_link), contentDescription = null) }
                     )
                     Spacer(Modifier.height(16.dp))
-                    Text("访问令牌 (Token)：", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    Text(stringResource(R.string.remote_token_label), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = inputToken,
                         onValueChange = { inputToken = it },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        placeholder = { Text("留空表示不鉴权") },
+                        placeholder = { Text(stringResource(R.string.remote_token_hint)) },
                         visualTransformation = PasswordVisualTransformation(),
                         leadingIcon = { Icon(Icons.Default.VpnKey, contentDescription = null) }
                     )
                     Text(
-                        "公网地址必须使用 HTTPS；局域网 HTTP 的 Token 仍是明文。",
+                        stringResource(R.string.remote_https_notice),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.outline,
                         modifier = Modifier.padding(top = 6.dp)
@@ -582,22 +590,27 @@ fun BookshelfScreen(
                             showApiDialog = false
                             if (endpoint.isCleartextLan && inputToken.isNotBlank()) {
                                 snackbarScope.launch {
-                                    snackbarHostState.showSnackbar("⚠️ 局域网 HTTP 会明文传输 Token")
+                                    snackbarHostState.showSnackbar(msgCleartextWarning)
                                 }
                             }
                         } catch (e: IllegalArgumentException) {
                             snackbarScope.launch {
-                                snackbarHostState.showSnackbar("❌ ${e.message}")
+                                snackbarHostState.showSnackbar(
+                                    context.getString(
+                                        R.string.bookshelf_scrape_failed,
+                                        e.toUiText().resolve(context)
+                                    )
+                                )
                             }
                         }
                     }
                 }) {
-                    Text("保存")
+                    Text(stringResource(R.string.common_save))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showApiDialog = false }) {
-                    Text("取消")
+                    Text(stringResource(R.string.common_cancel))
                 }
             },
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -884,7 +897,7 @@ fun SeriesGroupItem(
                     }
 
                     Surface(color = MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(topStart = 8.dp), modifier = Modifier.align(Alignment.BottomEnd)) {
-                        Text(text = "${group.bookCount} 册", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp), color = MaterialTheme.colorScheme.onPrimary)
+                        Text(text = pluralStringResource(R.plurals.bookshelf_volume_count, group.bookCount, group.bookCount), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp), color = MaterialTheme.colorScheme.onPrimary)
                     }
                 }
                 Text(text = group.displayTitle, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(8.dp))
@@ -967,7 +980,7 @@ fun SeriesHeader(group: SeriesGroupData) {
             Spacer(Modifier.height(8.dp))
             
             Text(
-                text = sample.summary ?: "暂无剧情简介", 
+                text = sample.summary ?: stringResource(R.string.bookshelf_no_summary), 
                 style = MaterialTheme.typography.bodySmall, 
                 maxLines = 10,
                 overflow = TextOverflow.Ellipsis,
@@ -990,27 +1003,27 @@ fun ComicMetadataDialog(comic: ComicEntity, onDismiss: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 if (comic.remark != null) {
-                    MetadataItem("备注名", comic.remark)
+                    MetadataItem(stringResource(R.string.metadata_remark), comic.remark)
                 }
-                MetadataItem("原始标题", comic.title)
-                MetadataItem("系列", comic.seriesName)
-                MetadataItem("出版年份", comic.year)
-                MetadataItem("出版社", comic.publisher)
-                MetadataItem("创作者", comic.authors)
-                MetadataItem("类型", comic.genres)
-                MetadataItem("分级", comic.rating?.toString())
-                MetadataItem("页数", "${comic.totalPages}P")
-                MetadataItem("路径", comic.location)
+                MetadataItem(stringResource(R.string.metadata_original_title), comic.title)
+                MetadataItem(stringResource(R.string.metadata_series), comic.seriesName)
+                MetadataItem(stringResource(R.string.metadata_year), comic.year)
+                MetadataItem(stringResource(R.string.metadata_publisher), comic.publisher)
+                MetadataItem(stringResource(R.string.metadata_authors), comic.authors)
+                MetadataItem(stringResource(R.string.metadata_genres), comic.genres)
+                MetadataItem(stringResource(R.string.metadata_rating), comic.rating?.toString())
+                MetadataItem(stringResource(R.string.metadata_pages), stringResource(R.string.metadata_page_count_value, comic.totalPages))
+                MetadataItem(stringResource(R.string.metadata_path), comic.location)
                 
                 if (!comic.summary.isNullOrBlank()) {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                    Text("剧情简介", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    Text(stringResource(R.string.common_summary), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                     Text(comic.summary, style = MaterialTheme.typography.bodySmall)
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("确定") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_ok)) }
         },
         shape = RoundedCornerShape(28.dp),
         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
@@ -1032,7 +1045,7 @@ fun ComicEditorDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("编辑详细信息") },
+        title = { Text(stringResource(R.string.editor_title)) },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
@@ -1043,19 +1056,19 @@ fun ComicEditorDialog(
                     TextButton(onClick = {
                         val cleaned = xyz.sakulik.comic.model.metadata.FilenameCleaner.clean(comic.title)
                         title = cleaned
-                    }) { Text("从文件名提取标题", style = MaterialTheme.typography.labelSmall) }
+                    }) { Text(stringResource(R.string.editor_extract_from_filename), style = MaterialTheme.typography.labelSmall) }
                 }
 
-                OutlinedTextField(value = remark, onValueChange = { remark = it }, label = { Text("书架备注名") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("原始标题") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = series, onValueChange = { series = it }, label = { Text("所属系列") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = remark, onValueChange = { remark = it }, label = { Text(stringResource(R.string.editor_remark)) }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text(stringResource(R.string.metadata_original_title)) }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = series, onValueChange = { series = it }, label = { Text(stringResource(R.string.editor_series)) }, modifier = Modifier.fillMaxWidth())
                 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = year, onValueChange = { year = it }, label = { Text("年份") }, modifier = Modifier.weight(1f))
-                    OutlinedTextField(value = authors, onValueChange = { authors = it }, label = { Text("作者") }, modifier = Modifier.weight(2f))
+                    OutlinedTextField(value = year, onValueChange = { year = it }, label = { Text(stringResource(R.string.editor_year)) }, modifier = Modifier.weight(1f))
+                    OutlinedTextField(value = authors, onValueChange = { authors = it }, label = { Text(stringResource(R.string.editor_authors)) }, modifier = Modifier.weight(2f))
                 }
 
-                OutlinedTextField(value = summary, onValueChange = { summary = it }, label = { Text("剧情简介") }, modifier = Modifier.fillMaxWidth(), minLines = 3)
+                OutlinedTextField(value = summary, onValueChange = { summary = it }, label = { Text(stringResource(R.string.common_summary)) }, modifier = Modifier.fillMaxWidth(), minLines = 3)
             }
         },
         confirmButton = {
@@ -1068,10 +1081,10 @@ fun ComicEditorDialog(
                     year = year.takeIf { it.isNotBlank() },
                     summary = summary.takeIf { it.isNotBlank() }
                 )) 
-            }) { Text("保存") }
+            }) { Text(stringResource(R.string.common_save)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
         }
     )
 }
@@ -1145,7 +1158,7 @@ fun CollectionSwimlaneItem(
                     modifier = Modifier.align(Alignment.BottomEnd)
                 ) {
                     Text(
-                        "${collection.comics.size} 册",
+                        pluralStringResource(R.plurals.bookshelf_volume_count, collection.comics.size, collection.comics.size),
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                         color = MaterialTheme.colorScheme.onPrimary
@@ -1174,10 +1187,10 @@ fun AddToCollectionDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("加入合集") },
+        title = { Text(stringResource(R.string.collection_add_to)) },
         text = {
             if (collections.isEmpty()) {
-                Text("您还没有创建任何合集")
+                Text(stringResource(R.string.collection_none_yet))
             } else {
                 LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
                     items(collections) { item ->
@@ -1192,12 +1205,12 @@ fun AddToCollectionDialog(
         },
         confirmButton = {
             TextButton(onClick = onCreateNewCollection) {
-                Text("新建合集")
+                Text(stringResource(R.string.collection_new))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.common_cancel))
             }
         },
         shape = RoundedCornerShape(28.dp)
@@ -1212,12 +1225,12 @@ fun CreateCollectionDialog(
     var name by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("新建合集") },
+        title = { Text(stringResource(R.string.collection_new)) },
         text = {
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                label = { Text("合集名称") },
+                label = { Text(stringResource(R.string.collection_name_label)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -1227,12 +1240,12 @@ fun CreateCollectionDialog(
                 onClick = { if (name.isNotBlank()) onConfirm(name) },
                 enabled = name.isNotBlank()
             ) {
-                Text("创建")
+                Text(stringResource(R.string.common_create))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.common_cancel))
             }
         },
         shape = RoundedCornerShape(28.dp)
@@ -1252,25 +1265,25 @@ fun RenameCollectionDialog(
     if (showDeleteConfirm) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
-            title = { Text("删除合集", color = MaterialTheme.colorScheme.error) },
-            text = { Text("确定要删除合集《$currentName》吗？这不会删除合集内的漫画文件。") },
+            title = { Text(stringResource(R.string.collection_delete), color = MaterialTheme.colorScheme.error) },
+            text = { Text(stringResource(R.string.collection_delete_confirm, currentName)) },
             confirmButton = {
-                TextButton(onClick = onDelete) { Text("确认删除", color = MaterialTheme.colorScheme.error) }
+                TextButton(onClick = onDelete) { Text(stringResource(R.string.collection_delete_action), color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteConfirm = false }) { Text("取消") }
+                TextButton(onClick = { showDeleteConfirm = false }) { Text(stringResource(R.string.common_cancel)) }
             }
         )
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("管理合集") },
+        title = { Text(stringResource(R.string.collection_manage)) },
         text = {
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                label = { Text("合集名称") },
+                label = { Text(stringResource(R.string.collection_name_label)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -1280,12 +1293,12 @@ fun RenameCollectionDialog(
                 onClick = { if (name.isNotBlank()) onConfirm(name) },
                 enabled = name.isNotBlank() && name != currentName
             ) {
-                Text("重命名")
+                Text(stringResource(R.string.common_rename))
             }
         },
         dismissButton = {
             TextButton(onClick = { showDeleteConfirm = true }) {
-                Text("删除合集", color = MaterialTheme.colorScheme.error)
+                Text(stringResource(R.string.collection_delete), color = MaterialTheme.colorScheme.error)
             }
         }
     )

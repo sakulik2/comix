@@ -27,8 +27,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import xyz.sakulik.comic.R
 import xyz.sakulik.comic.model.loader.ComicPageLoader
 import xyz.sakulik.comic.ui.ZoomableImage
 
@@ -99,11 +101,11 @@ fun ComicPageItem(
             ) {
                 Icon(
                     imageVector = Icons.Default.Warning,
-                    contentDescription = "加载失败",
+                    contentDescription = stringResource(R.string.page_load_failed),
                     tint = MaterialTheme.colorScheme.error
                 )
                 Text(
-                    text = "加载失败，点击重试",
+                    text = stringResource(R.string.page_load_failed_retry),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(top = 8.dp)
@@ -124,7 +126,7 @@ fun ComicPageItem(
                     } else {
                         androidx.compose.foundation.Image(
                             bitmap = data.asImageBitmap(),
-                            contentDescription = "漫画页",
+                            contentDescription = stringResource(R.string.cd_comic_page),
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Fit
                         )
@@ -134,7 +136,7 @@ fun ComicPageItem(
                     // 云端模式：直接使用 Coil 加载 URL
                     AsyncImage(
                         model = data,
-                        contentDescription = "云端漫画页",
+                        contentDescription = stringResource(R.string.cd_remote_comic_page),
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Fit
                     )

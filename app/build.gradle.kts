@@ -52,6 +52,12 @@ android {
         buildConfig = true
     }
 
+    androidResources {
+        // 由 values-* 目录自动生成 locale_config.xml
+        // Android 13+ 的系统设置会据此显示应用语言面板
+        generateLocaleConfig = true
+    }
+
     packaging {
         jniLibs {
             // 解决第三方 JNI 库无法进行二次 strip 的编译警告

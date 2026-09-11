@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import kotlinx.coroutines.flow.firstOrNull
 import xyz.sakulik.comic.model.db.ComicEntity
+import xyz.sakulik.comic.R
+import xyz.sakulik.comic.utils.UiText
 import xyz.sakulik.comic.model.db.ComicSource
 import xyz.sakulik.comic.model.network.ComicApiService
 import xyz.sakulik.comic.model.network.RetrofitClient
@@ -23,7 +25,10 @@ class ComicPageLoaderFactory(private val context: Context) {
         // 从 DataStore 中获取用户配置的 API 基础地址
         val baseUrlFromSettings = SettingsDataStore.getComicApiBaseUrlFlow(context).firstOrNull()
         if (baseUrlFromSettings.isNullOrBlank()) {
-            throw IllegalStateException("未配置远程服务器 API 地址")
+            throw RemoteResourceLimitException(
+                UiText.Res(R.string.error_remote_not_configured),
+                "remote API base URL is not configured"
+            )
         }
 
         return RetrofitClient.createService(
@@ -51,7 +56,10 @@ class ComicPageLoaderFactory(private val context: Context) {
             ComicSource.REMOTE -> {
                 val baseUrl = SettingsDataStore.getComicApiBaseUrlFlow(context).firstOrNull()
                 if (baseUrl.isNullOrBlank()) {
-                    throw IllegalStateException("未配置远程服务器 API 地址")
+                    throw RemoteResourceLimitException(
+                UiText.Res(R.string.error_remote_not_configured),
+                "remote API base URL is not configured"
+            )
                 }
                 val safeComicId = RemoteResourceLimits.validateComicId(comic.location)
                 val safeTotalPages = RemoteResourceLimits.validatePageCount(comic.totalPages)

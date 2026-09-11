@@ -5,7 +5,9 @@ import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import xyz.sakulik.comic.R
 import xyz.sakulik.comic.viewmodel.SeriesGroupData
 import xyz.sakulik.comic.model.db.ComicEntity
 import xyz.sakulik.comic.model.db.ComicFormat
@@ -41,7 +43,7 @@ fun SeriesDetailContent(
 
         if (collectedList.isNotEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) {
-                Text("合订本 / 卷", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp), color = MaterialTheme.colorScheme.primary)
+                Text(stringResource(R.string.series_collected), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp), color = MaterialTheme.colorScheme.primary)
             }
             items(collectedList) { book -> 
                 var displayT = book.issueTitle ?: book.title
@@ -67,12 +69,12 @@ fun SeriesDetailContent(
                     ) {
                         if (onRemoveFromCollection != null) {
                             TextButton(onClick = { onRemoveFromCollection(book) }) {
-                                Text("移除", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                                Text(stringResource(R.string.common_remove), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
                             }
                         }
                         if (onSetAsCover != null) {
                             TextButton(onClick = { onSetAsCover(book) }) {
-                                Text("设为封面", style = MaterialTheme.typography.labelSmall)
+                                Text(stringResource(R.string.common_set_as_cover), style = MaterialTheme.typography.labelSmall)
                             }
                         }
                     }
@@ -84,7 +86,7 @@ fun SeriesDetailContent(
                 Column(modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text("单本 / 期", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.secondary)
+                    Text(stringResource(R.string.series_issues), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.secondary)
                 }
             }
             items(issuesList) { book -> 

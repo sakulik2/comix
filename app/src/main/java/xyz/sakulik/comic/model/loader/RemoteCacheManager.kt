@@ -1,6 +1,8 @@
 package xyz.sakulik.comic.model.loader
 
 import android.content.Context
+import xyz.sakulik.comic.R
+import xyz.sakulik.comic.utils.UiText
 import java.io.File
 
 object RemoteCacheManager {
@@ -24,7 +26,10 @@ object RemoteCacheManager {
                 protectedFiles = if (directory.canonicalFile == protectedDirectoryPath) protectedPaths else emptySet()
             )
             if (directorySize(directory) > RemoteResourceLimits.MAX_COMIC_CACHE_BYTES) {
-                throw RemoteResourceLimitException("无法将单本远程漫画缓存压缩到安全配额内")
+                throw RemoteResourceLimitException(
+                    UiText.Res(R.string.error_remote_cache_quota_single),
+                    "cannot shrink single comic cache into quota"
+                )
             }
         }
 
@@ -43,7 +48,10 @@ object RemoteCacheManager {
             }
 
         if (totalSize > RemoteResourceLimits.MAX_GLOBAL_CACHE_BYTES) {
-            throw RemoteResourceLimitException("无法将远程漫画总缓存压缩到安全配额内")
+            throw RemoteResourceLimitException(
+                UiText.Res(R.string.error_remote_cache_quota_total),
+                "cannot shrink global remote cache into quota"
+            )
         }
     }
 

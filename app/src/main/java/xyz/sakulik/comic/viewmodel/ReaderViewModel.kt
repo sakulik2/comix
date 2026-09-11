@@ -25,6 +25,10 @@ import xyz.sakulik.comic.model.loader.LocalArchivePageLoader
 import xyz.sakulik.comic.model.loader.LocalPdfPageLoader
 import xyz.sakulik.comic.model.loader.RemoteStreamPageLoader
 import xyz.sakulik.comic.model.loader.RemoteResourceLimitException
+import xyz.sakulik.comic.R
+import xyz.sakulik.comic.utils.LocalizedIllegalStateException
+import xyz.sakulik.comic.utils.UiText
+import xyz.sakulik.comic.utils.toUiText
 import xyz.sakulik.comic.model.loader.RemoteResourceLimits
 import xyz.sakulik.comic.navigation.ReaderRoute
 import java.io.File
@@ -155,7 +159,10 @@ class ReaderViewModel(
             try {
                 // 根据 ID 查询漫画实体
                 var entity = dao.getComicById(matchedComicId)
-                    ?: throw IllegalArgumentException("找不到 ID 为 [$matchedComicId] 的漫画记录")
+                    ?: throw LocalizedIllegalStateException(
+                        UiText.Res(R.string.error_comic_not_found, listOf(matchedComicId.toString())),
+                        "no comic record for id $matchedComicId"
+                    )
                 
                 currentEntity = entity
                 val context = getApplication<Application>()
@@ -164,7 +171,10 @@ class ReaderViewModel(
                 if (entity.source == xyz.sakulik.comic.model.db.ComicSource.REMOTE) {
                     val baseUrl = SettingsDataStore.getComicApiBaseUrlFlow(context).firstOrNull()
                     if (baseUrl.isNullOrBlank()) {
-                        throw IllegalStateException("未配置远程服务器 API 地址，请在设置中配置")
+                        throw LocalizedIllegalStateException(
+                            UiText.Res(R.string.error_remote_not_configured),
+                            "remote API base URL is not configured"
+                        )
                     }
                     val apiService = RetrofitClient.createService(
                         context = context,
@@ -185,12 +195,17 @@ class ReaderViewModel(
                             val detail = apiService.getComicDetail(safeComicId)
                             RemoteResourceLimits.validateComicId(detail.id)
                             if (detail.id != safeComicId) {
-                                throw RemoteResourceLimitException("远程漫画详情 ID 与请求不一致")
+                                throw RemoteResourceLimitException(
+                                    UiText.Res(R.string.error_remote_detail_id_mismatch),
+                                    "remote detail id does not match the request"
+                                )
                             }
                             if (detail.status.equals("failed", ignoreCase = true)) {
+                                // 服务端返回的错误文本本地无法翻译，原样展示
                                 throw RemoteResourceLimitException(
-                                    detail.error?.takeIf { it.isNotBlank() }
-                                        ?: "服务端处理漫画失败"
+                                    detail.error?.takeIf { it.isNotBlank() }?.let { UiText.Raw(it) }
+                                        ?: UiText.Res(R.string.error_remote_server_failed),
+                                    "server reported a failed comic: ${detail.error}"
                                 )
                             }
                             isReady = detail.isReady
@@ -200,7 +215,7 @@ class ReaderViewModel(
                             )
                             if (!isReady) {
                                 _state.value = ComicState.Loading // 保持加载状态
-                                Log.d("ReaderViewModel", "云端正在解压中，第 ${retryCount + 1} 次轮询重试...")
+                                Log.d("ReaderViewModel", "remote extraction in progress, poll #${retryCount + 1}")
                                 kotlinx.coroutines.delay(readyCheckDelayMillis)
                                 retryCount++
                             }
@@ -208,7 +223,7 @@ class ReaderViewModel(
                             throw e
                         } catch (e: Exception) {
                             if (e is kotlinx.coroutines.CancellationException) throw e
-                            Log.e("ReaderViewModel", "云端详情请求异常:", e)
+                            Log.e("ReaderViewModel", "remote detail request failed", e)
                             kotlinx.coroutines.delay(readyCheckDelayMillis)
                             retryCount++
                         }
@@ -221,7 +236,10 @@ class ReaderViewModel(
                         entity = updatedEntity // 替换为最新实体以供后续 loader 创建使用
                         currentEntity = updatedEntity
                     } else {
-                        throw IllegalStateException("云端漫画尚未准备就绪，请稍后重试（当前解压任务可能仍在后台排队）")
+                        throw LocalizedIllegalStateException(
+                            UiText.Res(R.string.error_remote_not_ready),
+                            "remote comic is not ready yet"
+                        )
                     }
                 }
 
@@ -241,10 +259,17 @@ class ReaderViewModel(
                 pageLoader = loader
                 
                 val pageCount = loader.getPageCount()
-                if (pageCount == 0) throw IllegalStateException("无法加载漫画页面，文件可能已损坏或暂不支持该格式")
+                if (pageCount == 0) throw LocalizedIllegalStateException(
+                    UiText.Res(R.string.error_no_pages),
+                    "loader reported zero pages"
+                )
                 if (pageCount > RemoteResourceLimits.MAX_TOTAL_PAGES) {
-                    throw IllegalStateException(
-                        "漫画页数超出限制: $pageCount（最多 ${RemoteResourceLimits.MAX_TOTAL_PAGES} 页）"
+                    throw LocalizedIllegalStateException(
+                        UiText.Res(
+                            R.string.error_remote_total_pages,
+                            listOf(pageCount, RemoteResourceLimits.MAX_TOTAL_PAGES)
+                        ),
+                        "page count out of range: $pageCount"
                     )
                 }
 
@@ -254,12 +279,7 @@ class ReaderViewModel(
                 updateProgress(entity.currentPage.coerceIn(0, pageCount - 1), pageCount)
             } catch (e: Exception) {
                 e.printStackTrace()
-                val message = when {
-                    e.message?.contains("ENOSPC") == true -> "手机存储空间不足，无法加载漫画"
-                    e is java.io.FileNotFoundException -> "找不到漫画文件，请检查 SD 卡是否已卸载"
-                    else -> e.message ?: "解析失败，可能是文件损坏或格式不支持"
-                }
-                _state.value = ComicState.Error(message)
+                _state.value = ComicState.Error(e.toUiText())
             }
         }
     }

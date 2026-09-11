@@ -30,6 +30,8 @@ object ComicNameParser {
             year = match.groupValues.getOrNull(1)?.ifEmpty { match.groupValues.getOrNull(0) }?.filter { it.isDigit() }
         }
 
+        // 下方正则里的中文是识别中文文件名的业务规则，不是 UI 文案，
+        // 不可抽到 strings.xml，也不可翻译 —— 翻译会直接破坏解析。
         // 步骤一：识别漫画类型特征（日漫/美漫）
         
         // 抓取日漫“话”特征

@@ -10,8 +10,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import xyz.sakulik.comic.R
 import xyz.sakulik.comic.model.metadata.ScrapeSource
 import xyz.sakulik.comic.model.metadata.ScrapedComicInfo
 
@@ -38,7 +40,7 @@ fun ScrapingResultItem(info: ScrapedComicInfo, onClick: () -> Unit) {
             // 元数据详情
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = info.title,
+                    text = info.title.ifBlank { stringResource(R.string.metadata_untitled) },
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
@@ -47,7 +49,7 @@ fun ScrapingResultItem(info: ScrapedComicInfo, onClick: () -> Unit) {
                 
                 // 来源高警示 Badges
                 val badgeColor = if (info.source == ScrapeSource.COMIC_VINE) Color(0xFFD32F2F) else Color(0xFF1976D2)
-                val badgeText = if (info.source == ScrapeSource.COMIC_VINE) "ComicVine 数据库" else "Bangumi 番组计划"
+                val badgeText = stringResource(if (info.source == ScrapeSource.COMIC_VINE) R.string.scrape_source_comic_vine else R.string.scrape_source_bangumi)
                 Surface(
                     color = badgeColor,
                     shape = RoundedCornerShape(4.dp)

@@ -1,5 +1,8 @@
 package xyz.sakulik.comic.model.loader
 
+import xyz.sakulik.comic.R
+import xyz.sakulik.comic.utils.LocalizedThrowable
+import xyz.sakulik.comic.utils.UiText
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -20,7 +23,10 @@ object RemoteResourceLimits {
             character == '/' || character == '\\' || Character.isISOControl(character)
         }
         if (comicId.isBlank() || comicId.length > 256 || hasUnsafeCharacter) {
-            throw RemoteResourceLimitException("远程漫画 ID 格式无效")
+            throw RemoteResourceLimitException(
+                UiText.Res(R.string.error_remote_id_invalid),
+                "invalid remote comic id"
+            )
         }
         return comicId
     }
@@ -29,7 +35,8 @@ object RemoteResourceLimits {
         val minimum = if (allowZero) 0 else 1
         if (totalPages !in minimum..MAX_TOTAL_PAGES) {
             throw RemoteResourceLimitException(
-                "远程漫画页数超出限制: $totalPages（最多 $MAX_TOTAL_PAGES 页）"
+                UiText.Res(R.string.error_remote_total_pages, listOf(totalPages, MAX_TOTAL_PAGES)),
+                "remote page count out of range: $totalPages"
             )
         }
         return totalPages
@@ -43,7 +50,10 @@ object RemoteResourceLimits {
             .joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xFF) }
         val comicDirectory = File(remoteRoot, "comic_$digest").canonicalFile
         if (comicDirectory.parentFile != remoteRoot) {
-            throw RemoteResourceLimitException("远程漫画缓存路径无效")
+            throw RemoteResourceLimitException(
+                UiText.Res(R.string.error_remote_cache_path_invalid),
+                "remote cache path escaped its root"
+            )
         }
         return comicDirectory
     }
@@ -57,7 +67,11 @@ object RemoteResourceLimits {
             total += read
             if (total > MAX_PAGE_BYTES) {
                 throw RemoteResourceLimitException(
-                    "远程页面超过 ${MAX_PAGE_BYTES / 1024 / 1024}MB 限制"
+                    UiText.Res(
+                        R.string.error_remote_page_limit,
+                        listOf((MAX_PAGE_BYTES / 1024 / 1024).toInt())
+                    ),
+                    "remote page exceeds $MAX_PAGE_BYTES bytes"
                 )
             }
             output.write(buffer, 0, read)
@@ -65,4 +79,11 @@ object RemoteResourceLimits {
     }
 }
 
-class RemoteResourceLimitException(message: String) : IOException(message)
+/**
+ * 只携带 UiText，由 UI 层解析成用户语言；
+ * 传给 IOException 的 message 是给 logcat 看的英文技术串。
+ */
+class RemoteResourceLimitException(
+    override val uiText: UiText,
+    technicalMessage: String
+) : IOException(technicalMessage), LocalizedThrowable

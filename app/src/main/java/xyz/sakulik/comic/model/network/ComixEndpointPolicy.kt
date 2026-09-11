@@ -2,6 +2,9 @@ package xyz.sakulik.comic.model.network
 
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import xyz.sakulik.comic.R
+import xyz.sakulik.comic.utils.LocalizedIllegalArgumentException
+import xyz.sakulik.comic.utils.UiText
 
 object ComixEndpointPolicy {
     data class Endpoint(
@@ -11,14 +14,26 @@ object ComixEndpointPolicy {
 
     fun parse(rawUrl: String): Endpoint {
         val trimmed = rawUrl.trim()
-        require(trimmed.isNotEmpty()) { "API 地址不能为空" }
+        if (trimmed.isEmpty()) throw LocalizedIllegalArgumentException(
+            UiText.Res(R.string.error_endpoint_empty),
+            "endpoint url is empty"
+        )
 
         val candidate = if (SCHEME_PATTERN.containsMatchIn(trimmed)) trimmed else "http://$trimmed"
         val parsed = candidate.toHttpUrlOrNull()
-            ?: throw IllegalArgumentException("API 地址格式无效")
-        require(parsed.query == null && parsed.fragment == null) { "API 地址不能包含查询参数或片段" }
-        require(parsed.scheme == "https" || isPrivateLanHost(parsed.host)) {
-            "公网服务器必须使用 HTTPS；HTTP 仅允许局域网地址"
+            ?: throw LocalizedIllegalArgumentException(
+                UiText.Res(R.string.error_endpoint_invalid),
+                "endpoint url is not parseable: $candidate"
+            )
+        if (parsed.query != null || parsed.fragment != null) throw LocalizedIllegalArgumentException(
+            UiText.Res(R.string.error_endpoint_query),
+            "endpoint url carries a query or fragment"
+        )
+        if (parsed.scheme != "https" && !isPrivateLanHost(parsed.host)) {
+            throw LocalizedIllegalArgumentException(
+                UiText.Res(R.string.error_endpoint_https_required),
+                "refusing plaintext HTTP for public host ${parsed.host}"
+            )
         }
 
         val normalized = if (parsed.encodedPath.endsWith('/')) {

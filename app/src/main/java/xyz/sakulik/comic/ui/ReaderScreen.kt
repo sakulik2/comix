@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import xyz.sakulik.comic.R
 import xyz.sakulik.comic.model.loader.ComicPageLoader
 import xyz.sakulik.comic.model.loader.ReaderLayoutManager
@@ -62,6 +63,12 @@ fun ReaderScreen(
     val context = LocalContext.current
     val window = (context as? Activity)?.window
     val coroutineScope = rememberCoroutineScope()
+
+    // 协程内无法调用 stringResource，先在 Composable 作用域取出
+    val reloadingMsg = stringResource(R.string.reader_reloading)
+    val coverUpdatedMsg = stringResource(R.string.reader_cover_updated)
+    val sharpenOnMsg = stringResource(R.string.reader_sharpen_enabled)
+    val sharpenOffMsg = stringResource(R.string.reader_sharpen_disabled)
 
     // 状态定义（移至函数头部以防提前引用报错）
     var isUserInteractionBlocked by remember { mutableStateOf(false) }
@@ -272,21 +279,21 @@ fun ReaderScreen(
                 title = { Text(comicTitle, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                     }
                 },
                 actions = {
                     IconButton(onClick = onToggleReaderMode) {
                         Icon(
                             painter = if (readerMode == ReaderMode.PAGER) painterResource(R.drawable.ic_vertical_distribute) else painterResource(R.drawable.ic_view_carousel), 
-                            contentDescription = "切换模式"
+                            contentDescription = stringResource(R.string.cd_toggle_reader_mode)
                         )
                     }
 
                     var showMenu by remember { mutableStateOf(false) }
                     Box {
                         IconButton(onClick = { showMenu = true }) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "更多选项")
+                            Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.cd_more_options))
                         }
                         DropdownMenu(
                             expanded = showMenu,
@@ -296,7 +303,7 @@ fun ReaderScreen(
                         ) {
                             if (isRemote) {
                                 DropdownMenuItem(
-                                    text = { Text("重新加载当前页") },
+                                    text = { Text(stringResource(R.string.reader_reload_page)) },
                                     leadingIcon = { Icon(Icons.Default.Refresh, null) },
                                     onClick = {
                                         showMenu = false
@@ -304,25 +311,25 @@ fun ReaderScreen(
                                             val currentPage = savedPage.intValue
                                             (loader as? xyz.sakulik.comic.model.loader.RemoteStreamPageLoader)?.evictPageCache(currentPage)
                                             reloadKey++
-                                            snackbarHostState.showSnackbar("正在重新加载当前页面...")
+                                            snackbarHostState.showSnackbar(reloadingMsg)
                                         }
                                     }
                                 )
                                 HorizontalDivider()
                             }
                             DropdownMenuItem(
-                                text = { Text("设为封面") },
+                                text = { Text(stringResource(R.string.common_set_as_cover)) },
                                 leadingIcon = { Icon(Icons.Default.PhotoCamera, null) },
                                 onClick = {
                                     showMenu = false
                                     onSetAsCover(savedPage.intValue)
                                     coroutineScope.launch {
-                                        snackbarHostState.showSnackbar("封面已更新并同步元数据")
+                                        snackbarHostState.showSnackbar(coverUpdatedMsg)
                                     }
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text(if (isSharpenEnabled) "关闭画质增强" else "开启画质增强") },
+                                text = { Text(stringResource(if (isSharpenEnabled) R.string.reader_sharpen_off else R.string.reader_sharpen_on)) },
                                 leadingIcon = { Icon(painterResource(R.drawable.ic_auto_awesome), null, tint = if (isSharpenEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
                                 onClick = {
                                     showMenu = false
@@ -331,13 +338,13 @@ fun ReaderScreen(
                                     reloadKey++
                                     coroutineScope.launch {
                                         snackbarHostState.showSnackbar(
-                                            if (enabling) "画质增强已开启，当前页面已重新处理" else "画质增强已关闭"
+                                            if (enabling) sharpenOnMsg else sharpenOffMsg
                                         )
                                     }
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("手动搜索重刮削") },
+                                text = { Text(stringResource(R.string.reader_rescrape)) },
                                 leadingIcon = { Icon(Icons.Default.Sync, null) },
                                 onClick = {
                                     showMenu = false
@@ -346,7 +353,7 @@ fun ReaderScreen(
                             )
                             HorizontalDivider()
                             DropdownMenuItem(
-                                text = { Text("从右向左翻页 (RTL)") },
+                                text = { Text(stringResource(R.string.reader_rtl)) },
                                 trailingIcon = {
                                     Switch(
                                         checked = isRtl,
@@ -357,7 +364,7 @@ fun ReaderScreen(
                                 onClick = { onToggleRtl() }
                             )
                             DropdownMenuItem(
-                                text = { Text("音量键翻页") },
+                                text = { Text(stringResource(R.string.reader_volume_key)) },
                                 trailingIcon = {
                                     Switch(
                                         checked = isVolumeKeyEnabled,
@@ -389,12 +396,12 @@ fun ReaderScreen(
         if (showJumpDialog) {
             AlertDialog(
                 onDismissRequest = { showJumpDialog = false },
-                title = { Text("跳转到页码") },
+                title = { Text(stringResource(R.string.reader_jump_title)) },
                 text = {
                     OutlinedTextField(
                         value = jumpInput,
                         onValueChange = { if (it.all { char -> char.isDigit() }) jumpInput = it },
-                        label = { Text("输入页码 (1 - $pageCount)") },
+                        label = { Text(stringResource(R.string.reader_jump_hint, pageCount)) },
                         modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                             keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
@@ -414,10 +421,10 @@ fun ReaderScreen(
                             }
                             showJumpDialog = false
                         }
-                    }) { Text("确定") }
+                    }) { Text(stringResource(R.string.common_ok)) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showJumpDialog = false }) { Text("取消") }
+                    TextButton(onClick = { showJumpDialog = false }) { Text(stringResource(R.string.common_cancel)) }
                 }
             )
         }

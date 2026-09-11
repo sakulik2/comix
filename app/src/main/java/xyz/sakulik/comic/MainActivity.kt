@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.createSavedStateHandle
@@ -31,6 +32,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
+import xyz.sakulik.comic.R
 import xyz.sakulik.comic.model.db.AppDatabase
 import xyz.sakulik.comic.model.db.ComicEntity
 import xyz.sakulik.comic.navigation.*
@@ -166,7 +168,7 @@ fun ComicAppNavHost() {
                             IconButton(onClick = { navController.popBackStack() }) {
                                 Icon(
                                     Icons.AutoMirrored.Filled.ArrowBack, 
-                                    contentDescription = "后退"
+                                    contentDescription = stringResource(R.string.common_back)
                                 )
                             }
                         },
@@ -220,7 +222,7 @@ fun ComicAppNavHost() {
                             IconButton(onClick = { navController.popBackStack() }) {
                                 Icon(
                                     Icons.AutoMirrored.Filled.ArrowBack, 
-                                    contentDescription = "后退"
+                                    contentDescription = stringResource(R.string.common_back)
                                 )
                             }
                         },
@@ -328,7 +330,7 @@ fun ComicAppNavHost() {
                 }
                 is ComicState.Error -> {
                     xyz.sakulik.comic.ui.components.ErrorScreen(
-                        message = s.message,
+                        text = s.text,
                         onBack = { navController.popBackStack() }
                     )
                 }

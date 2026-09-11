@@ -20,8 +20,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import xyz.sakulik.comic.R
 import xyz.sakulik.comic.model.metadata.ScrapeSource
 import xyz.sakulik.comic.model.metadata.ScrapeStrategy
 import xyz.sakulik.comic.viewmodel.ScrapeStep
@@ -51,7 +53,7 @@ fun ScrapeSearchScreen(
             TopAppBar(
                 title = { 
                     Text(
-                        text = if (currentStep == ScrapeStep.VOLUME) "搜索系列" else (selectedVolume?.title ?: "选取分期"),
+                        text = if (currentStep == ScrapeStep.VOLUME) stringResource(R.string.scrape_search_series) else (selectedVolume?.title ?: stringResource(R.string.scrape_pick_issue)),
                         style = MaterialTheme.typography.titleLarge,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -67,7 +69,7 @@ fun ScrapeSearchScreen(
                     }) {
                         Icon(
                             imageVector = if (currentStep == ScrapeStep.ISSUE) Icons.AutoMirrored.Filled.ArrowBack else Icons.Default.Close,
-                            contentDescription = "返回"
+                            contentDescription = stringResource(R.string.common_back)
                         )
                     }
                 }
@@ -92,13 +94,13 @@ fun ScrapeSearchScreen(
                             value = searchQuery,
                             onValueChange = viewModel::onQueryChanged,
                             modifier = Modifier.fillMaxWidth(),
-                            placeholder = { Text("输入关键词搜素系列...") },
+                            placeholder = { Text(stringResource(R.string.scrape_search_hint)) },
                             trailingIcon = {
                                 if (isSearching) {
                                     CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                                 } else {
                                     IconButton(onClick = { viewModel.search() }) {
-                                        Icon(Icons.Default.Search, contentDescription = "搜索")
+                                        Icon(Icons.Default.Search, contentDescription = stringResource(R.string.cd_search))
                                     }
                                 }
                             },
@@ -108,7 +110,7 @@ fun ScrapeSearchScreen(
                         
                         Spacer(Modifier.height(12.dp))
                         
-                        Text("搜索策略", style = MaterialTheme.typography.labelMedium)
+                        Text(stringResource(R.string.scrape_strategy), style = MaterialTheme.typography.labelMedium)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -117,7 +119,7 @@ fun ScrapeSearchScreen(
                                 FilterChip(
                                     selected = strategy == s,
                                     onClick = { viewModel.onStrategyChanged(s) },
-                                    label = { Text(s.displayName) }
+                                    label = { Text(stringResource(s.labelRes)) }
                                 )
                             }
                         }
@@ -130,7 +132,7 @@ fun ScrapeSearchScreen(
                     color = MaterialTheme.colorScheme.secondaryContainer
                 ) {
                     Text(
-                        text = "正在浏览系列「${selectedVolume?.title}」下的全部分期",
+                        text = stringResource(R.string.scrape_browsing_series, selectedVolume?.title ?: ""),
                         modifier = Modifier.padding(12.dp),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSecondaryContainer
@@ -141,7 +143,7 @@ fun ScrapeSearchScreen(
             if (searchResults.isEmpty() && !isSearching) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
-                        if (currentStep == ScrapeStep.VOLUME) "没有搜到系列，请尝试更换关键词" else "该系列下暂无匹配分期",
+                        stringResource(if (currentStep == ScrapeStep.VOLUME) R.string.scrape_no_series_found else R.string.scrape_no_issues_found),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -172,7 +174,7 @@ fun ScrapeSearchScreen(
                                 Box(modifier = Modifier.aspectRatio(0.75f)) {
                                     AsyncImage(
                                         model = result.coverUrl,
-                                        contentDescription = result.title,
+                                        contentDescription = result.title.ifBlank { stringResource(R.string.metadata_untitled) },
                                         modifier = Modifier.fillMaxSize(),
                                         contentScale = ContentScale.Crop
                                     )
@@ -219,11 +221,12 @@ fun ScrapeSearchScreen(
                                         .padding(8.dp)
                                         .fillMaxWidth()
                                 ) {
+                                    val untitled = stringResource(R.string.metadata_untitled)
                                     val displayTitle = if (currentStep == ScrapeStep.VOLUME) {
-                                        result.title
+                                        result.title.ifBlank { untitled }
                                     } else {
                                         // 智能去重：如果分期名和系列名一样，且有副标题，优先显示副标题
-                                        result.issueTitle ?: result.title
+                                        result.issueTitle ?: result.title.ifBlank { untitled }
                                     }
                                     
                                     // 强制固定高度（2行），防止因文字长短导致的垂直偏移

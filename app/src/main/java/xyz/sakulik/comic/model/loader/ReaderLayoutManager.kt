@@ -3,6 +3,8 @@ package xyz.sakulik.comic.model.loader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import xyz.sakulik.comic.viewmodel.ReaderMode
+import xyz.sakulik.comic.R
+import xyz.sakulik.comic.utils.UiText
 
 /**
  * 渲染区块定义
@@ -38,8 +40,12 @@ class ReaderLayoutManager(
      */
     suspend fun computeLayout(pageCount: Int, readerMode: ReaderMode) = withContext(Dispatchers.IO) {
         if (pageCount !in 0..RemoteResourceLimits.MAX_TOTAL_PAGES) {
-            throw IllegalArgumentException(
-                "漫画页数超出限制: $pageCount（最多 ${RemoteResourceLimits.MAX_TOTAL_PAGES} 页）"
+            throw RemoteResourceLimitException(
+                UiText.Res(
+                    R.string.error_remote_total_pages,
+                    listOf(pageCount, RemoteResourceLimits.MAX_TOTAL_PAGES)
+                ),
+                "page count out of range: $pageCount"
             )
         }
 
