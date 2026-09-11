@@ -570,11 +570,16 @@ class LocalArchivePageLoader(
                         "cbz", "zip" -> {
                             java.util.zip.ZipFile(mirror).use { zip ->
                                 ArchiveResourceLimits.requireEntryCount(zip.size().toLong())
-                                val entries = zip.entries().asSequence().filter { !it.isDirectory && isImage(it.name) }.sortedBy { it.name }.toList()
+                                val entries = cachedEntries ?: zip.entries().asSequence()
+                                    .filter { !it.isDirectory && isImage(it.name) }
+                                    .map { it.name }
+                                    .sorted()
+                                    .toList()
+                                    .also { cachedEntries = it }
                                 if (pageIndex in entries.indices) {
-                                    zip.getInputStream(entries[pageIndex]).use {
+                                    zip.getEntry(entries[pageIndex])?.let { entry -> zip.getInputStream(entry).use {
                                         decodeImageStream(limitedPageStream(it), width, height)
-                                    }
+                                    } }
                                 } else null
                             }
                         }
@@ -757,9 +762,16 @@ class LocalArchivePageLoader(
                             "cbz", "zip" -> {
                                 java.util.zip.ZipFile(mirrorFile).use { zip ->
                                     ArchiveResourceLimits.requireEntryCount(zip.size().toLong())
-                                    val entriesList = zip.entries().asSequence().filter { !it.isDirectory && isImage(it.name) }.sortedBy { it.name }.toList()
+                                    val entriesList = cachedEntries ?: zip.entries().asSequence()
+                                        .filter { !it.isDirectory && isImage(it.name) }
+                                        .map { it.name }
+                                        .sorted()
+                                        .toList()
+                                        .also { cachedEntries = it }
                                     if (idx in entriesList.indices) {
-                                        zip.getInputStream(entriesList[idx]).use { saveEntryToCache(it, idx) }
+                                        zip.getEntry(entriesList[idx])?.let { entry ->
+                                            zip.getInputStream(entry).use { saveEntryToCache(it, idx) }
+                                        }
                                     }
                                 }
                             }

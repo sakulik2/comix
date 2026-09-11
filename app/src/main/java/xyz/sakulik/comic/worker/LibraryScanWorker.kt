@@ -22,6 +22,7 @@ import xyz.sakulik.comic.model.scanner.CoverExtractor
 import xyz.sakulik.comic.model.preferences.SettingsDataStore
 import kotlinx.coroutines.flow.first
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * WorkManager 后台扫描任务
@@ -59,7 +60,8 @@ class LibraryScanWorker(
         setProgress(workDataOf(PROGRESS_MSG to "准备扫描 ${targetUris.size} 个授权目录..."))
 
         // 存活的独立文件列表（防重入哈希）
-        val aliveUriStrings = mutableSetOf<String>()
+        // 多个解压任务并发写入，用线程安全集合，否则清理阶段会把已扫到的漫画误判成死链
+        val aliveUriStrings = ConcurrentHashMap.newKeySet<String>()
         var foundCount = 0
 
         // 阶段一：新资源入库与已存在验证
@@ -188,10 +190,10 @@ class LibraryScanWorker(
         for (comic in allDbComics) {
             // 如果是指定的单目录扫描，先判定该漫画是否位于该目录下
             val isWithinCurrentScanScope = if (uriString != null) {
-                comic.uri.startsWith(uriString)
+                isUriInScope(comic.uri, uriString)
             } else {
                 // 如果是全量扫描，作用域覆盖所有历史授权目录
-                targetUris.any { comic.uri.startsWith(it.toString()) }
+                targetUris.any { isUriInScope(comic.uri, it.toString()) }
             }
 
             if (isWithinCurrentScanScope && !aliveUriStrings.contains(comic.uri)) {
@@ -224,5 +226,11 @@ class LibraryScanWorker(
             }
         }
         return result
+    }
+
+    /** 按路径段比对，避免 /Comics2 被 /Comics 的作用域吞掉。 */
+    private fun isUriInScope(uri: String, scope: String): Boolean {
+        val normalizedScope = scope.trimEnd('/')
+        return uri == normalizedScope || uri.startsWith("$normalizedScope/")
     }
 }

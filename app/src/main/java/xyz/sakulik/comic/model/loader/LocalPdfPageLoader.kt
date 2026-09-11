@@ -45,12 +45,13 @@ class LocalPdfPageLoader(
     private val bitmapPool = java.util.Collections.synchronizedList(mutableListOf<Bitmap>())
 
     private fun obtainBitmap(w: Int, h: Int, config: Bitmap.Config): Bitmap {
-        val requiredBytes = w * h * (if (config == Bitmap.Config.RGB_565) 2 else 4)
+        // 大页面的 w * h * 4 会溢出 Int，先升到 Long
+        val requiredBytes = w.toLong() * h.toLong() * (if (config == Bitmap.Config.RGB_565) 2L else 4L)
         synchronized(bitmapPool) {
             val it = bitmapPool.iterator()
             while (it.hasNext()) {
                 val b = it.next()
-                if (!b.isRecycled && b.isMutable && b.allocationByteCount >= requiredBytes) {
+                if (!b.isRecycled && b.isMutable && b.allocationByteCount.toLong() >= requiredBytes) {
                     it.remove()
                     b.reconfigure(w, h, config)
                     b.eraseColor(android.graphics.Color.TRANSPARENT)
