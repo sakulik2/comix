@@ -41,7 +41,13 @@ android {
     signingConfigs {
         if (keystoreProperties.containsKey("storeFile")) {
             create("release") {
-                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                // 绝对路径直接用，相对路径按仓库根目录解析
+                val configuredStore = File(keystoreProperties.getProperty("storeFile"))
+                storeFile = if (configuredStore.isAbsolute) {
+                    configuredStore
+                } else {
+                    rootProject.file(configuredStore)
+                }
                 storePassword = keystoreProperties.getProperty("storePassword")
                 keyAlias = keystoreProperties.getProperty("keyAlias")
                 keyPassword = keystoreProperties.getProperty("keyPassword")
