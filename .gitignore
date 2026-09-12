@@ -20,6 +20,11 @@ build/
 # Local configuration files
 local.properties
 
+# Signing credentials and keystores — never commit these
+keystore.properties
+*.jks
+*.keystore
+
 # Log files
 *.log
 
