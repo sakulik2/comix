@@ -55,6 +55,20 @@ class ComicNameParserTest {
     }
 
     @Test
+    fun `兜底期号取靠前的数字而非最后一个`() {
+        // 靠后的数字是页数等噪声，早期实现会一路覆盖成 8
+        val parsed = ComicNameParser.parse("某漫画 03 附赠 8P.cbz")
+        assertEquals(3f, parsed.issueNumber)
+    }
+
+    @Test
+    fun `兜底期号跳过被识别为年份的数字`() {
+        val parsed = ComicNameParser.parse("Some Series 2011 04.cbz")
+        assertEquals("2011", parsed.year)
+        assertEquals(4f, parsed.issueNumber)
+    }
+
+    @Test
     fun `Vol 与 TPB 同时出现时按合订本处理`() {
         val parsed = ComicNameParser.parse("Saga Vol. 3 TPB.cbz")
         assertEquals(ComicRegion.COMIC, parsed.region)

@@ -101,16 +101,17 @@ object ComicNameParser {
         // 步骤二：如果没有识别到明确的期号，尝试直接提取纯数字作为期号
         if (issueNumber == null) {
             val fallbackIssuePattern = Regex("\\b(\\d{1,4})\\b")
-            // 找寻所有 matches，排除掉已经被识别为年份的那个数字
-            fallbackIssuePattern.findAll(workingName).forEach { match ->
-                val numStr = match.groupValues[1]
-                if (numStr != year) {
+            // 取第一个非年份数字：文件名里靠前的数字才是期号，
+            // 靠后的往往是页数、附赠数量等噪声，遍历到最后会被覆盖成错的。
+            fallbackIssuePattern.findAll(workingName)
+                .map { it.groupValues[1] }
+                .firstOrNull { it != year }
+                ?.let { numStr ->
                     issueNumber = numStr.toFloatOrNull()
                     if (format == ComicFormat.UNKNOWN) {
                         format = ComicFormat.ISSUE
                     }
                 }
-            }
         }
 
         // 步骤三：清洗文件名，提取系列标题
