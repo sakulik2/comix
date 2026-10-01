@@ -3,6 +3,7 @@ package xyz.sakulik.comic.model.network
 import okhttp3.Interceptor
 import okhttp3.Response
 import java.io.IOException
+import xyz.sakulik.comic.BuildConfig
 import xyz.sakulik.comic.R
 import xyz.sakulik.comic.utils.LocalizedThrowable
 import xyz.sakulik.comic.utils.UiText
@@ -51,7 +52,8 @@ class HeaderInterceptor(
                     builder.header("x-comix-token", token)
                 }
                 // 仅对 Comix 协议请求，覆盖并注入专属的 UA
-                builder.header("User-Agent", "comix/1.7.2 (Android; Mobile)")
+                // 版本号取自 BuildConfig，避免手写常量随发版漂移
+                builder.header("User-Agent", "comix/${BuildConfig.VERSION_NAME} (Android; Mobile)")
             }
         }
         
