@@ -7,36 +7,12 @@ import xyz.sakulik.comic.model.db.ComicEntity
 import xyz.sakulik.comic.R
 import xyz.sakulik.comic.utils.UiText
 import xyz.sakulik.comic.model.db.ComicSource
-import xyz.sakulik.comic.model.network.ComicApiService
-import xyz.sakulik.comic.model.network.RetrofitClient
 import xyz.sakulik.comic.model.preferences.SettingsDataStore
 
 /**
  * 漫画加载器工厂根据 ComicEntity 的 source 类型创建对应的加载引擎
  */
 class ComicPageLoaderFactory(private val context: Context) {
-
-    private var _apiService: ComicApiService? = null
-
-    private suspend fun getApiService(): ComicApiService {
-        val current = _apiService
-        if (current != null) return current
-        
-        // 从 DataStore 中获取用户配置的 API 基础地址
-        val baseUrlFromSettings = SettingsDataStore.getComicApiBaseUrlFlow(context).firstOrNull()
-        if (baseUrlFromSettings.isNullOrBlank()) {
-            throw RemoteResourceLimitException(
-                UiText.Res(R.string.error_remote_not_configured),
-                "remote API base URL is not configured"
-            )
-        }
-
-        return RetrofitClient.createService(
-            context = context,
-            baseUrl = if (baseUrlFromSettings.endsWith("/")) baseUrlFromSettings else "$baseUrlFromSettings/",
-            serviceClass = ComicApiService::class.java
-        ).also { _apiService = it }
-    }
 
     suspend fun create(comic: ComicEntity): ComicPageLoader {
         return when (comic.source) {
